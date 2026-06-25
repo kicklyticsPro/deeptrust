@@ -1,1 +1,344 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analyse Turf - Stats PMU</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🏇 Analyse Turf - Statistiques PMU</h1>
+            <p class="subtitle">Analyse purement statistique, sans prise en compte des cotes</p>
+        </header>
 
+        <section class="controls">
+            <div class="form-row">
+                <div class="field">
+                    <label for="dateInput">Date (JJMMAAAA)</label>
+                    <input type="text" id="dateInput" placeholder="25062026" maxlength="8">
+                </div>
+                <div class="field">
+                    <label for="reunionSelect">Réunion</label>
+                    <select id="reunionSelect">
+                        <option value="">Choisir une réunion</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label for="courseSelect">Course</label>
+                    <select id="courseSelect">
+                        <option value="">Choisir une course</option>
+                    </select>
+                </div>
+                <div class="field btn-field">
+                    <button id="loadBtn" class="btn-primary">Analyser la course</button>
+                </div>
+            </div>
+            <div id="loading" class="loading hidden">Chargement des données...</div>
+            <div id="errorMsg" class="error hidden"></div>
+        </section>
+
+        <section id="courseInfo" class="course-info hidden">
+            <h2 id="courseTitle"></h2>
+            <div id="courseMeta" class="meta"></div>
+        </section>
+
+        <section id="ranking" class="ranking hidden"></section>
+        <section id="results" class="results hidden"></section>
+    </div>
+
+    <script>
+        const dateInput = document.getElementById('dateInput');
+        const reunionSelect = document.getElementById('reunionSelect');
+        const courseSelect = document.getElementById('courseSelect');
+        const loadBtn = document.getElementById('loadBtn');
+        const loading = document.getElementById('loading');
+        const errorMsg = document.getElementById('errorMsg');
+        const courseInfo = document.getElementById('courseInfo');
+        const courseTitle = document.getElementById('courseTitle');
+        const courseMeta = document.getElementById('courseMeta');
+        const results = document.getElementById('results');
+
+        // Date par défaut aujourd'hui
+        const today = new Date();
+        const dd = String(today.getDate()).padStart(2, '0');
+        const mm = String(today.getMonth() + 1).padStart(2, '0');
+        const yyyy = today.getFullYear();
+        dateInput.value = dd + mm + yyyy;
+
+        let reunionsData = [];
+        let selectedCourseData = null;
+
+        async function loadReunions() {
+            const date = dateInput.value;
+            if (!date || date.length !== 8) {
+                showError('Date invalide. Format : JJMMAAAA');
+                return;
+            }
+            loading.classList.remove('hidden');
+            errorMsg.classList.add('hidden');
+            try {
+                const res = await fetch(`/api/reunions?date=${date}`);
+                const data = await res.json();
+                if (!data.success) throw new Error(data.error);
+                reunionsData = data.reunions || [];
+                populateReunions();
+            } catch (e) {
+                showError('Erreur chargement réunions : ' + e.message);
+            } finally {
+                loading.classList.add('hidden');
+            }
+        }
+
+        function populateReunions() {
+            reunionSelect.innerHTML = '<option value="">Choisir une réunion</option>';
+            courseSelect.innerHTML = '<option value="">Choisir une course</option>';
+            selectedCourseData = null;
+            courseInfo.classList.add('hidden');
+            results.classList.add('hidden');
+
+            reunionsData.forEach(r => {
+                const opt = document.createElement('option');
+                opt.value = r.numOfficiel;
+                opt.textContent = `R${r.numOfficiel} - ${r.hippodrome.libelleCourt || 'Hippodrome'} (${r.pays.libelle || 'FR'})`;
+                reunionSelect.appendChild(opt);
+            });
+        }
+
+        function populateCourses() {
+            courseSelect.innerHTML = '<option value="">Choisir une course</option>';
+            selectedCourseData = null;
+            courseInfo.classList.add('hidden');
+            results.classList.add('hidden');
+
+            const numReunion = reunionSelect.value;
+            const reunion = reunionsData.find(r => String(r.numOfficiel) === numReunion);
+            if (!reunion) return;
+
+            reunion.courses.forEach(c => {
+                const opt = document.createElement('option');
+                opt.value = c.numOrdre;
+                opt.textContent = `C${c.numOrdre} - ${c.libelleCourt || c.libelle || 'Course'} (${c.distance || '?'}m ${c.discipline || ''})`;
+                opt.dataset.json = JSON.stringify(c);
+                courseSelect.appendChild(opt);
+            });
+        }
+
+        function updateCourseInfo() {
+            const opt = courseSelect.selectedOptions[0];
+            if (!opt || !opt.dataset.json) {
+                courseInfo.classList.add('hidden');
+                return;
+            }
+            selectedCourseData = JSON.parse(opt.dataset.json);
+            courseTitle.textContent = `C${selectedCourseData.numOrdre} - ${selectedCourseData.libelle || ''}`;
+            courseMeta.innerHTML = `
+                <span><strong>Hippodrome:</strong> ${selectedCourseData.hippodrome?.libelleCourt || 'N/A'}</span>
+                <span><strong>Distance:</strong> ${selectedCourseData.distance || 'N/A'} ${selectedCourseData.distanceUnit || ''}</span>
+                <span><strong>Corde:</strong> ${selectedCourseData.corde || 'N/A'}</span>
+                <span><strong>Discipline:</strong> ${selectedCourseData.discipline || 'N/A'} / ${selectedCourseData.specialite || 'N/A'}</span>
+                <span><strong>Partants:</strong> ${selectedCourseData.nombreDeclaresPartants || 'N/A'}</span>
+                <span><strong>Type:</strong> ${selectedCourseData.categorieParticularite || 'N/A'}</span>
+                <span><strong>Condition:</strong> ${selectedCourseData.conditionAge || ''} - ${selectedCourseData.conditionSexe || ''}</span>
+            `;
+            courseInfo.classList.remove('hidden');
+        }
+
+        async function loadAnalysis() {
+            if (!reunionSelect.value || !courseSelect.value) {
+                showError('Sélectionnez une réunion et une course.');
+                return;
+            }
+            const date = dateInput.value;
+            const reunion = `R${reunionSelect.value}`;
+            const course = courseSelect.value;
+
+            loading.classList.remove('hidden');
+            errorMsg.classList.add('hidden');
+            results.classList.add('hidden');
+            try {
+                const res = await fetch(`/api/analyse?date=${date}&reunion=${reunion}&course=${course}`);
+                const data = await res.json();
+                if (!data.success) throw new Error(data.error);
+                renderAnalyses(data.analyses);
+            } catch (e) {
+                showError('Erreur analyse : ' + e.message);
+            } finally {
+                loading.classList.add('hidden');
+            }
+        }
+
+        function showError(msg) {
+            errorMsg.textContent = msg;
+            errorMsg.classList.remove('hidden');
+        }
+
+        function renderAnalyses(analyses) {
+            results.innerHTML = '';
+            if (!analyses || analyses.length === 0) {
+                results.innerHTML = '<p class="no-data">Aucun participant trouvé.</p>';
+                results.classList.remove('hidden');
+                document.getElementById('ranking').classList.add('hidden');
+                return;
+            }
+
+            // --- Classement ---
+            let rankingHtml = '';
+            if (analyses[0].scores) {
+                rankingHtml += '<div class="podium">';
+                for (let i = 0; i < Math.min(3, analyses.length); i++) {
+                    const a = analyses[i];
+                    const s = a.scores || {};
+                    const cls = i === 0 ? 'first' : (i === 1 ? 'second' : 'third');
+                    rankingHtml += `
+                        <div class="podium-item ${cls}">
+                            <div class="rank">${i+1}</div>
+                            <div class="podium-name">${a.attitude.nom || 'N/A'} <span class="podium-num">N°${a.attitude.numPmu}</span></div>
+                            <div class="podium-score">${s.total || 0}</div>
+                            <div class="podium-detail">
+                                G:${s.global||0} R:${s.recente||0} M:${s.musique||0}
+                                C:${s.corde||0} D:${s.distance||0}
+                            </div>
+                        </div>
+                    `;
+                }
+                rankingHtml += '</div>';
+
+                rankingHtml += '<div class="rank-table"><h3>Classement complet</h3><table><thead><tr><th>Rang</th><th>N°</th><th>Nom</th><th>Score</th><th>Global</th><th>Récente</th><th>Musique</th><th>Corde</th><th>Dist.</th><th>Disc.</th><th>Hippo.</th><th>Jockey</th><th>Entr.</th></tr></thead><tbody>';
+                analyses.forEach((a, i) => {
+                    const s = a.scores || {};
+                    rankingHtml += `<tr><td class="rank-col">${i+1}</td><td>${a.attitude.numPmu}</td><td><strong>${a.attitude.nom}</strong></td><td class="score-total">${s.total || 0}</td><td>${s.global || 0}</td><td>${s.recente || 0}</td><td>${s.musique || 0}</td><td>${s.corde || 0}</td><td>${s.distance || 0}</td><td>${s.discipline || 0}</td><td>${s.hippodrome || 0}</td><td>${s.jockey || 0}</td><td>${s.entraineur || 0}</td></tr>`;
+                });
+                rankingHtml += '</tbody></table></div>';
+            }
+            const rankingSection = document.getElementById('ranking');
+            rankingSection.innerHTML = rankingHtml;
+            rankingSection.classList.remove('hidden');
+
+            // --- Cartes détaillées ---
+            analyses.forEach((a, idx) => {
+                const att = a.attitude;
+                const glob = a.global;
+                const s = a.scores || {};
+                const card = document.createElement('div');
+                card.className = 'horse-card';
+
+                let rankBadge = '';
+                if (a.scores) {
+                    rankBadge = `<div class="rank-badge" title="Rang ${idx+1}">${idx+1}</div>`;
+                }
+                let scoreBar = '';
+                if (a.scores) {
+                    const pct = Math.min(100, Math.max(0, (s.total || 0) / 100 * 100));
+                    scoreBar = `<div class="score-bar-wrap"><div class="score-bar" style="width:${pct}%"></div><div class="score-bar-label">Score : ${s.total}</div></div>`;
+                }
+
+                let html = `${rankBadge}
+                    <div class="horse-header">
+                        <div class="num">${att.numPmu}</div>
+                        <div class="infos">
+                            <h3>${att.nom || 'N/A'} <span class="age">${att.age || '?'} ans ${att.sexe || ''}</span></h3>
+                            <div class="tags">
+                                <span class="tag">${att.race || ''}</span>
+                                <span class="tag">Corde ${att.corde || '?'}</span>
+                                <span class="tag">Poids ${att.poids ? (att.poids/10 + ' kg') : 'N/A'}</span>
+                                <span class="tag">${att.jockey || 'N/A'}</span>
+                                <span class="tag trainer">${att.entraineur || 'N/A'}</span>
+                                <span class="tag">${att.oeilleres || ''}</span>
+                                <span class="tag">${att.robe || ''}</span>
+                            </div>
+                        </div>
+                        <div class="musique">
+                            <div class="label">Musique</div>
+                            <div class="value">${att.musique || 'N/A'}</div>
+                        </div>
+                    </div>
+                    ${scoreBar}
+                    <div class="stats-grid">
+                        <div class="stat-box">
+                            <div class="stat-title">Global</div>
+                            <div class="stat-body">
+                                <div><strong>Total:</strong> ${glob.totalCourses || 0}</div>
+                                <div><strong>Victoires:</strong> ${glob.victoires || 0} (${glob.pctVictoire || 0}%)</div>
+                                <div><strong>Places 1-2-3:</strong> ${glob.places123 || 0} (${glob.pctPlace || 0}%)</div>
+                                <div><strong>Place moy.:</strong> ${glob.placeMoyenne || 'N/A'}</div>
+                                <div><strong>Victoires (5 dernières):</strong> ${glob.victoiresLast5 || 0}</div>
+                                <div><strong>Places (5 dernières):</strong> ${glob.placesLast5 || 0}</div>
+                                <div><strong>Gains carrière:</strong> ${att.gainsCarriere ? (att.gainsCarriere/100).toLocaleString('fr-FR') + ' €' : 'N/A'}</div>
+                            </div>
+                        </div>
+                `;
+
+                html += buildCritereBox('Corde', a.byCorde, att.corde);
+                html += buildCritereBox('Distance', a.byDistance, null);
+                html += buildCritereBox('Discipline', a.byDiscipline, null);
+                html += buildCritereBox('Jockey', a.byJockey, att.jockey);
+                html += buildCritereBox('Hippodrome', a.byHippodrome, null);
+                html += buildCritereBox('Terrain', a.byTerrain, null);
+
+                html += `</div>`; // close stats-grid
+
+                // Historique détaillé
+                if (a.history && a.history.length > 0) {
+                    html += `<div class="history"><h4>10 dernières courses</h4><table>
+                        <thead>
+                            <tr><th>Date</th><th>Hippodrome</th><th>Prix</th><th>Disc.</th><th>Dist.</th><th>Terrain</th><th>Corde</th><th>Poids</th><th>Jockey</th><th>Place</th><th>Statut</th></tr>
+                        </thead><tbody>`;
+                    a.history.forEach(h => {
+                        const d = h.date ? new Date(h.date).toLocaleDateString('fr-FR') : 'N/A';
+                        html += `<tr>
+                            <td>${d}</td>
+                            <td>${h.hippodrome || ''}</td>
+                            <td>${h.nomPrix || ''}</td>
+                            <td>${h.discipline || ''}</td>
+                            <td>${h.distance || ''}</td>
+                            <td>${h.etatTerrain || ''}</td>
+                            <td>${h.corde || ''}</td>
+                            <td>${h.poidsJockey ? (h.poidsJockey + ' kg') : ''}</td>
+                            <td>${h.nomJockey || ''}</td>
+                            <td class="place-${h.place === 1 ? '1' : (h.place && h.place <= 3 ? '3' : '')}">${h.place || '-'}</td>
+                            <td>${h.statusArrivee || ''}</td>
+                        </tr>`;
+                    });
+                    html += `</tbody></table></div>`;
+                }
+
+                html += `</div>`; // close horse-card
+                card.innerHTML = html;
+                results.appendChild(card);
+            });
+
+            results.classList.remove('hidden');
+        }
+
+        function buildCritereBox(title, data, currentValue) {
+            if (!data || Object.keys(data).length === 0) return '';
+            let rows = '';
+            Object.entries(data).forEach(([k, v]) => {
+                const highlight = (currentValue !== null && String(k) === String(currentValue)) ? 'highlight' : '';
+                rows += `<tr class="${highlight}"><td>${k}</td><td>${v.total}</td><td>${v.victoires}</td><td>${v.pctVictoire}%</td><td>${v.places123}</td><td>${v.pctPlace}%</td><td>${v.placeMoyenne || 'N/A'}</td></tr>`;
+            });
+            return `
+                <div class="stat-box">
+                    <div class="stat-title">${title}</div>
+                    <div class="stat-body small">
+                        <table class="mini-table">
+                            <thead><tr><th>Critère</th><th>Total</th><th>V</th><th>%V</th><th>P123</th><th>%P</th><th>Pl.Moy</th></tr></thead>
+                            <tbody>${rows}</tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        }
+
+        dateInput.addEventListener('change', loadReunions);
+        reunionSelect.addEventListener('change', populateCourses);
+        courseSelect.addEventListener('change', updateCourseInfo);
+        loadBtn.addEventListener('click', loadAnalysis);
+
+        // Charger au démarrage
+        loadReunions();
+    </script>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a1138b2ddcd9214f',t:'MTc4MjM4NjAxNA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</html>
