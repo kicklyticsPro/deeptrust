@@ -196,19 +196,19 @@
                             <div class="rank">${i+1}</div>
                             <div class="podium-name">${a.attitude.nom || 'N/A'} <span class="podium-num">N°${a.attitude.numPmu}</span></div>
                             <div class="podium-score">${s.total || 0}</div>
-                            <div class="podium-detail">
-                                G:${s.global||0} R:${s.recente||0} M:${s.musique||0}
-                                C:${s.corde||0} D:${s.distance||0}
-                            </div>
+                        <div class="podium-detail">
+                            Exp:${s.experience_total||0} Réc:${s.recente||0} Mus:${s.musique||0}
+                            Adap:${s.adaptation||0} BM:${s.bonus_malus||0}
+                        </div>
                         </div>
                     `;
                 }
                 rankingHtml += '</div>';
 
-                rankingHtml += '<div class="rank-table"><h3>Classement complet</h3><table><thead><tr><th>Rang</th><th>N°</th><th>Nom</th><th>Score</th><th>Global</th><th>Récente</th><th>Musique</th><th>Corde</th><th>Dist.</th><th>Disc.</th><th>Hippo.</th><th>Jockey</th><th>Entr.</th></tr></thead><tbody>';
+                rankingHtml += '<div class="rank-table"><h3>Classement complet</h3><table><thead><tr><th>Rang</th><th>N°</th><th>Nom</th><th>Score</th><th>Expérience</th><th>Régularité</th><th>Récente</th><th>Musique</th><th>Adaptation</th><th>Bonus/Malus</th></tr></thead><tbody>';
                 analyses.forEach((a, i) => {
                     const s = a.scores || {};
-                    rankingHtml += `<tr><td class="rank-col">${i+1}</td><td>${a.attitude.numPmu}</td><td><strong>${a.attitude.nom}</strong></td><td class="score-total">${s.total || 0}</td><td>${s.global || 0}</td><td>${s.recente || 0}</td><td>${s.musique || 0}</td><td>${s.corde || 0}</td><td>${s.distance || 0}</td><td>${s.discipline || 0}</td><td>${s.hippodrome || 0}</td><td>${s.jockey || 0}</td><td>${s.entraineur || 0}</td></tr>`;
+                    rankingHtml += `<tr><td class="rank-col">${i+1}</td><td>${a.attitude.numPmu}</td><td><strong>${a.attitude.nom}</strong></td><td class="score-total">${s.total || 0}</td><td>${s.experience_total || 0}</td><td>${s.regularite || 0}</td><td>${s.recente || 0}</td><td>${s.musique || 0}</td><td>${s.adaptation || 0}</td><td>${s.bonus_malus || 0}</td></tr>`;
                 });
                 rankingHtml += '</tbody></table></div>';
             }
@@ -279,6 +279,22 @@
 
                 html += `</div>`; // close stats-grid
 
+                // Breakdown du score
+                if (a.scores) {
+                    const s = a.scores;
+                    const bd = s.bonus_details || {};
+                    html += `<div class="score-breakdown">
+                        <h4>Breakdown du score</h4>
+                        <div class="breakdown-grid">
+                            <div class="bd-item"><div class="bd-label">Expérience</div><div class="bd-val">${s.experience_total || 0}</div><div class="bd-sub">Exp:${s.experience||0} Rég:${s.regularite||0}</div></div>
+                            <div class="bd-item"><div class="bd-label">Forme récente</div><div class="bd-val">${s.recente || 0}</div></div>
+                            <div class="bd-item"><div class="bd-label">Musique</div><div class="bd-val">${s.musique || 0}</div></div>
+                            <div class="bd-item"><div class="bd-label">Adaptation</div><div class="bd-val">${s.adaptation || 0}</div><div class="bd-sub">Corde:${s.corde||0} Dist:${s.distance||0} Disc:${s.discipline||0} Hippo:${s.hippodrome||0} Jock:${s.jockey||0}</div></div>
+                            <div class="bd-item ${s.bonus_malus >= 0 ? 'positive' : 'negative'}"><div class="bd-label">Bonus/Malus</div><div class="bd-val">${s.bonus_malus > 0 ? '+' : ''}${s.bonus_malus || 0}</div><div class="bd-sub">${bd.inedit !== undefined ? 'Inédit:' + bd.inedit : ''} ${bd.jockey_change !== undefined ? 'Jock.change:' + bd.jockey_change : ''} ${bd.gains !== undefined ? 'Gains:' + bd.gains : ''} ${bd.place_moyenne !== undefined ? 'Pl.moy:' + bd.place_moyenne : ''} ${bd.derniere_victoire !== undefined ? 'Dern.vict:' + bd.derniere_victoire : ''}</div></div>
+                        </div>
+                    </div>`;
+                }
+
                 // Historique détaillé
                 if (a.history && a.history.length > 0) {
                     html += `<div class="history"><h4>10 dernières courses</h4><table>
@@ -340,5 +356,5 @@
         // Charger au démarrage
         loadReunions();
     </script>
-<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a1138b2ddcd9214f',t:'MTc4MjM4NjAxNA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</body>
 </html>
