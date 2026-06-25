@@ -1,73 +1,67 @@
-import streamlit as st
-import pandas as pd
-from analysis import get_stock_data, analyze_stock
-from filters import get_sbf120_tickers, filter_pea_liquidity
-import plotly.graph_objects as go
+from flask import Flask, render_template, jsonify, request
+from pmu_client import PMUClient
+from analyzer import build_analyses
+from datetime import datetime
+import os
 
-st.set_page_config(page_title="PEA Trader Pro", layout="wide")
+app = Flask(__name__)
+client = PMUClient()
 
-st.title("🚀 PEA Trader Pro - Analyse en Temps Réel")
 
-# Barre latérale pour les filtres
-st.sidebar.header("Configuration du Filtre PEA")
-min_vol = st.sidebar.slider("Volume min quotidien (M€)", 0, 50, 2)
+@app.route("/")
+def index():
+    return render_template("index.html")
 
-# Cache pour ne pas rescanner à chaque clic
-@st.cache_data(ttl=3600)
-def get_eligible_universe(vol_threshold):
-    raw_list = get_sbf120_tickers()
-    return filter_pea_liquidity(raw_list, min_volume_euro=vol_threshold*1000000)
 
-TICKERS = get_eligible_universe(min_vol)
-st.sidebar.write(f"Actions analysées : {len(TICKERS)}")
+@app.route("/api/reunions")
+def api_reunions():
+    date = request.args.get("date", datetime.now().strftime("%d%m%Y"))
+    try:
+        prog = client.get_programme(date)
+        reunions = client.parse_reunions(prog)
+        return jsonify({"success": True, "date": date, "reunions": reunions})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
 
-results = []
 
-for ticker in TICKERS:
-    analysis = analyze_stock(ticker)
-    if analysis:
-        results.append({
-            "Ticker": ticker,
-            "Prix": analysis['price'],
-            "Score": analysis['score'],
-            "Raisons": analysis['reasons'],
-            "Signal": analysis['signal'],
-            "Stop Loss": analysis['stop_loss'],
-            "Take Profit": analysis['take_profit']
+@app.route("/api/analyse")
+def api_analyse():
+    date = request.args.get("date", datetime.now().strftime("%d%m%Y"))
+    reunion = request.args.get("reunion", "R1")
+    course = request.args.get("course", "1")
+    try:
+        # Récupérer les métadonnées de la course pour contexte de scoring
+        prog = client.get_programme(date)
+        reunions = client.parse_reunions(prog)
+        course_info = None
+        for r in reunions:
+            if f"R{r['numOfficiel']}" == reunion.upper() or f"R{r['numExterne']}" == reunion.upper():
+                for c in r["courses"]:
+                    if str(c["numOrdre"]) == course:
+                        course_info = c
+                        break
+            if course_info:
+                break
+
+        part_data = client.get_participants(date, reunion, course)
+        participants = client.parse_participants(part_data)
+
+        perf_data = client.get_performances_detaillees(date, reunion, course)
+        performances = client.parse_performances(perf_data)
+
+        analyses = build_analyses(participants, performances, course_info)
+        return jsonify({
+            "success": True,
+            "date": date,
+            "reunion": reunion,
+            "course": course,
+            "courseInfo": course_info,
+            "analyses": analyses
         })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
 
-df_results = pd.DataFrame(results)
 
-# Affichage des alertes
-st.subheader("🎯 Opportunités de Trading (Confirmé)")
-col1, col2 = st.columns(2)
-
-buys = df_results[df_results['Signal'] == "ACHAT"]
-sells = df_results[df_results['Signal'] == "VENTE"]
-
-with col1:
-    st.success("🟢 Signaux d'ACHAT (Flux validé)")
-    if not buys.empty:
-        st.dataframe(buys)
-    else:
-        st.write("Aucun signal d'achat détecté.")
-
-with col2:
-    st.error("🔴 Signaux de VENTE (Prise de profit)")
-    if not sells.empty:
-        st.dataframe(sells)
-    else:
-        st.write("Aucun signal de vente détecté.")
-
-# Détail par action
-st.subheader("📊 Analyse Graphique & Volatilité")
-selected_ticker = st.selectbox("Choisir une action pour voir le graphique :", TICKERS)
-data_chart = get_stock_data(selected_ticker, interval="1h", period="1mo")
-
-fig = go.Figure()
-fig.add_trace(go.Candlestick(x=data_chart.index,
-                open=data_chart['Open'],
-                high=data_chart['High'],
-                low=data_chart['Low'],
-                close=data_chart['Close'], name='Prix'))
-st.plotly_chart(fig, use_container_width=True)
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=True)
