@@ -160,6 +160,18 @@ input, select {
 .crit-table .total-row td { border-top: 2px solid #334155; font-size: 1.05rem; }
 .no-criteres { background: #1a1a2e; color: var(--accent); padding: 12px 16px; border-radius: 8px; border-left: 3px solid var(--accent); margin: 12px 0; font-size: 0.95rem; }
 
+/* Indice de confiance */
+.confiance-row { display: flex; align-items: center; gap: 12px; margin: 10px 0 14px; padding: 10px 14px; background: #0b1220; border-radius: 8px; border: 1px solid #1e293b; }
+.conf-label { font-size: 0.85rem; color: var(--muted); font-weight: 600; white-space: nowrap; }
+.confiance-bar { flex: 1; height: 14px; background: #1e293b; border-radius: 7px; overflow: hidden; position: relative; }
+.conf-fill { height: 100%; background: linear-gradient(90deg, #ef4444, #f59e0b, #22c55e); border-radius: 7px; transition: width 0.5s ease; }
+.confiance-bar.high .conf-fill { background: #22c55e; }
+.confiance-bar.mid .conf-fill { background: #f59e0b; }
+.confiance-bar.low .conf-fill { background: #ef4444; }
+
+/* SF value */
+.sf-val { color: #c084fc; font-weight: 700; font-family: monospace; }
+
 /* Temps stats */
 .temps-box { text-align: center; min-width: 130px; }
 .temps-label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; }
