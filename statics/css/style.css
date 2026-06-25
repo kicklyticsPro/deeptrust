@@ -147,6 +147,17 @@ input, select {
 
 .no-data { color: var(--muted); padding: 20px; text-align: center; }
 
+/* Score Breakdown */
+.score-breakdown { margin: 12px 0 16px; }
+.score-breakdown h4 { color: var(--accent); font-size: 0.95rem; margin-bottom: 8px; }
+.breakdown-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
+.bd-item { background: #0b1220; border-radius: 8px; padding: 10px; border: 1px solid #1e293b; text-align: center; }
+.bd-item.positive { border-color: #22c55e; }
+.bd-item.negative { border-color: #ef4444; }
+.bd-label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; margin-bottom: 4px; }
+.bd-val { font-size: 1.2rem; font-weight: 700; color: var(--text); }
+.bd-sub { font-size: 0.7rem; color: var(--muted); margin-top: 4px; line-height: 1.3; }
+
 /* Ranking / Classement */
 .ranking { margin-bottom: 24px; }
 .podium {
