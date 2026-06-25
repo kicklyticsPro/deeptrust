@@ -63,12 +63,12 @@ class PMUClient:
                     "nombreDeclaresPartants": c.get("nombreDeclaresPartants"),
                     "typePiste": c.get("typePiste"),
                     "statut": c.get("statut"),
-                    "hippodrome": c.get("hippodrome", {}),
+                    "hippodrome": c.get("hippodrome") or {},
                 })
             reunions.append({
                 "numOfficiel": r.get("numOfficiel"),
                 "numExterne": r.get("numExterne"),
-                "hippodrome": r.get("hippodrome", {}),
+                "hippodrome": r.get("hippodrome") or {},
                 "nature": r.get("nature"),
                 "pays": r.get("pays", {}),
                 "courses": courses,
@@ -118,11 +118,13 @@ class PMUClient:
             })
         return clean
 
-    def parse_performances(self, perf_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def parse_performances(self, perf_data: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Extrait pour chaque cheval son historique de courses.
         Retourne une liste de dicts avec nomCheval, numPmu, courses[]
         """
+        if not perf_data or not isinstance(perf_data, dict):
+            return []
         horses = []
         for p in perf_data.get("participants", []):
             cheval = {

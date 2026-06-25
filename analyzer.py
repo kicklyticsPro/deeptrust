@@ -143,13 +143,16 @@ def _score_criterion(stats_dict: Dict[str, Any], current_value, max_pts: float =
     return min(max_pts + 2, score)
 
 
-def compute_score(analysis: Dict[str, Any], course_context: Dict[str, Any]) -> Dict[str, Any]:
+def compute_score(analysis: Dict[str, Any], course_context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Calcule un score composite 0-100+ pour chaque cheval.
     """
-    glob = analysis.get('global', {})
-    att = analysis.get('attitude', {})
+    glob = analysis.get('global', {}) if analysis else {}
+    att = analysis.get('attitude', {}) if analysis else {}
     scores = {}
+    if not course_context:
+        scores['total'] = 0
+        return scores
 
     # 1. Forme globale (20 pts max)
     scores['global'] = round(_score_global(glob), 1)
@@ -171,7 +174,7 @@ def compute_score(analysis: Dict[str, Any], course_context: Dict[str, Any]) -> D
             distance_rounded = str(distance)
 
     discipline = course_context.get('discipline')
-    hippodrome = course_context.get('hippodrome', {}).get('libelleCourt')
+    hippodrome = (course_context.get('hippodrome') or {}).get('libelleCourt')
     jockey = att.get('jockey')
 
     scores['corde'] = round(_score_criterion(analysis.get('byCorde', {}), corde, 8), 1)

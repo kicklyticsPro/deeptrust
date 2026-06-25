@@ -3,6 +3,11 @@ from pmu_client import PMUClient
 from analyzer import build_analyses
 from datetime import datetime
 import os
+import traceback
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 client = PMUClient()
@@ -45,13 +50,17 @@ def api_analyse():
 
         part_data = client.get_participants(date, reunion, course)
         participants = client.parse_participants(part_data)
+        logger.info(f"Participants: {len(participants)}")
 
         perf_data = client.get_performances_detaillees(date, reunion, course)
-        # Si l'API performances retourne une erreur, ignorer l'historique
-        if perf_data and not perf_data.get("participants") and perf_data.get("code"):
+        logger.info(f"Perf data type: {type(perf_data)} keys: {list(perf_data.keys()) if isinstance(perf_data, dict) else 'N/A'}")
+        
+        # Si l'API performances retourne une erreur ou None, ignorer l'historique
+        if not perf_data or (isinstance(perf_data, dict) and not perf_data.get("participants") and perf_data.get("code")):
             performances = []
         else:
             performances = client.parse_performances(perf_data)
+        logger.info(f"Performances: {len(performances)}")
 
         analyses = build_analyses(participants, performances, course_info)
         return jsonify({
@@ -63,7 +72,9 @@ def api_analyse():
             "analyses": analyses
         })
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        logger.error(f"Error in analyse: {e}")
+        logger.error(traceback.format_exc())
+        return jsonify({"success": False, "error": str(e), "traceback": traceback.format_exc()}), 500
 
 
 if __name__ == "__main__":
