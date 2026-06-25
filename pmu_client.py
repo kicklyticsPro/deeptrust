@@ -1,5 +1,4 @@
 import requests
-from datetime import datetime
 from typing import List, Dict, Any, Optional
 
 BASE_OFFLINE = "https://offline.turfinfo.api.pmu.fr/rest/client/7"
@@ -9,6 +8,7 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
     "Accept": "application/json",
 }
+
 
 class PMUClient:
     def __init__(self):
@@ -20,12 +20,7 @@ class PMUClient:
         resp.raise_for_status()
         return resp.json()
 
-    def get_programme(self, date: Optional[str] = None) -> Dict[str, Any]:
-        """
-        date au format DDMMYYYY. Si None, aujourd'hui.
-        """
-        if date is None:
-            date = datetime.now().strftime("%d%m%Y")
+    def get_programme(self, date: str) -> Dict[str, Any]:
         url = f"{BASE_OFFLINE}/programme/{date}"
         return self._get(url)
 
@@ -34,14 +29,10 @@ class PMUClient:
         return self._get(url)
 
     def get_performances_detaillees(self, date: str, reunion: str, course: str) -> Dict[str, Any]:
-        # online + /pretty nécessaire pour que ça fonctionne
         url = f"{BASE_ONLINE}/programme/{date}/{reunion}/C{course}/performances-detaillees/pretty"
         return self._get(url)
 
     def parse_reunions(self, programme: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """
-        Retourne une liste de réunions simplifiées avec hippodrome, numéro, courses.
-        """
         reunions = []
         for r in programme.get("programme", {}).get("reunions", []):
             courses = []
@@ -70,15 +61,12 @@ class PMUClient:
                 "numExterne": r.get("numExterne"),
                 "hippodrome": r.get("hippodrome") or {},
                 "nature": r.get("nature"),
-                "pays": r.get("pays", {}),
+                "pays": r.get("pays") or {},
                 "courses": courses,
             })
         return reunions
 
     def parse_participants(self, participants_data: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """
-        Nettoie les données participants et retire toute notion de cotes/paris/rapports.
-        """
         clean = []
         for p in participants_data.get("participants", []):
             clean.append({
@@ -120,11 +108,11 @@ class PMUClient:
 
     def parse_performances(self, perf_data: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Extrait pour chaque cheval son historique de courses.
-        Retourne une liste de dicts avec nomCheval, numPmu, courses[]
+        Extrait pour chaque cheval son historique de courses avec données temps complètes.
         """
         if not perf_data or not isinstance(perf_data, dict):
             return []
+
         horses = []
         for p in perf_data.get("participants", []):
             cheval = {
@@ -133,20 +121,39 @@ class PMUClient:
                 "courses": [],
             }
             for course in p.get("coursesCourues", []):
-                # trouver le participant correspondant à ce cheval (itsHim=True)
+                # Extraire tous les participants de la course pour calculer les distances cumulées
+                participants_raw = course.get("participants", [])
+
+                # Construire un mapping par place
+                participants_by_place = {}
+                for part in participants_raw:
+                    place_info = part.get("place")
+                    if place_info:
+                        place_num = place_info.get("place")
+                        if place_num is not None:
+                            participants_by_place[place_num] = {
+                                "numPmu": part.get("numPmu"),
+                                "nomCheval": part.get("nomCheval"),
+                                "nomJockey": part.get("nomJockey"),
+                                "poidsJockey": part.get("poidsJockey"),
+                                "corde": part.get("corde"),
+                                "oeillere": part.get("oeillere"),
+                                "distanceAvecPrecedent": part.get("distanceAvecPrecedent"),
+                                "itsHim": part.get("itsHim") is True,
+                                "place": place_num,
+                            }
+
+                # Trouver le cheval actuel
                 him = None
-                for part in course.get("participants", []):
-                    if part.get("itsHim") is True:
+                for part in participants_by_place.values():
+                    if part["itsHim"]:
                         him = part
                         break
+
                 if him is None:
                     continue
 
-                # place peut être null si non classé/retiré/etc
-                place_info = him.get("place", {})
-                place = place_info.get("place") if place_info else None
-                status_arrivee = place_info.get("statusArrivee") if place_info else None
-
+                # Stocker la course avec toutes les données brutes nécessaires
                 cheval["courses"].append({
                     "date": course.get("date"),
                     "hippodrome": course.get("hippodrome"),
@@ -157,12 +164,12 @@ class PMUClient:
                     "nbParticipants": course.get("nbParticipants"),
                     "tempsDuPremier": course.get("tempsDuPremier"),
                     "etatTerrain": course.get("etatTerrain"),
-                    "place": place,
-                    "statusArrivee": status_arrivee,
-                    "corde": him.get("corde"),
-                    "poidsJockey": him.get("poidsJockey"),
-                    "nomJockey": him.get("nomJockey"),
-                    "oeillere": him.get("oeillere"),
+                    "place": him["place"],
+                    "corde": him["corde"],
+                    "poidsJockey": him["poidsJockey"],
+                    "nomJockey": him["nomJockey"],
+                    "oeillere": him["oeillere"],
+                    "participantsByPlace": participants_by_place,
                 })
             horses.append(cheval)
         return horses
