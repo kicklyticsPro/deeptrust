@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Analyse Turf - Performance Rating</title>
+    <title>Analyse Turf - Performance Rating Pro</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>🏇 Analyse Turf - Performance Rating</h1>
-            <p class="subtitle">Méthode Timeform-like : temps ajustés par niveau, poids, terrain, distance, corde</p>
+            <h1>🏇 Analyse Turf - Performance Rating Pro</h1>
+            <p class="subtitle">Méthode Beyer/Timeform : temps ajustés, Speed Figure, écarts en longueurs</p>
         </header>
 
         <section class="controls">
@@ -194,29 +194,35 @@
                 for (let i = 0; i < Math.min(3, analyses.length); i++) {
                     const a = analyses[i];
                     const s = a.score || {};
-                    const c = s.components || {};
-                    const ecart = (a.score.score - bestScore).toFixed(2);
+                    const r = a.ratings || {};
+                    const ecart = a.ecart_longueurs ?? '?';
+                    const ecartTxt = ecart > 0 ? `+${ecart} L` : (ecart == 0 ? '0 L' : 'Inconnu');
                     const cls = i === 0 ? 'first' : (i === 1 ? 'second' : 'third');
+                    const conf = s.indice_confiance ?? 0;
+                    const confClass = conf >= 70 ? 'high' : (conf >= 40 ? 'mid' : 'low');
                     rankingHtml += `
                         <div class="podium-item ${cls}">
                             <div class="rank">${i+1}</div>
                             <div class="podium-name">${a.attitude.nom || 'N/A'} <span class="podium-num">N°${a.attitude.numPmu}</span></div>
-                            <div class="podium-score">Score ${a.score.score}</div>
-                            <div class="podium-detail">+${ecart} vs 1er · ${a.ratings.total_courses} courses<br>
-                            Moy:${c.rating_moyen} Réc:${c.rating_recent} Adap:${c.rating_adaptation}</div>
+                            <div class="podium-score">Score ${s.score}</div>
+                            <div class="podium-detail">${ecartTxt} · ${r.total_courses} courses<br>
+                            SF: ${r.sf_moyen || 'N/A'} · Conf: ${conf}%</div>
+                            <div class="confiance-bar ${confClass}"><div class="conf-fill" style="width:${conf}%"></div></div>
                         </div>
                     `;
                 }
                 rankingHtml += '</div>';
 
-                rankingHtml += '<div class="rank-table"><h3>Classement complet (Score Performance Rating)</h3><table><thead><tr><th>Rang</th><th>N°</th><th>Nom</th><th>Score</th><th>Écart</th><th>Moyen</th><th>Récent</th><th>Adaptation</th><th>Tendance</th><th>Fiabilité</th><th>Courses</th></tr></thead><tbody>';
+                rankingHtml += '<div class="rank-table"><h3>Classement complet - Performance Rating</h3><table><thead><tr><th>Rang</th><th>N°</th><th>Nom</th><th>Score</th><th>Écart</th><th>PR Moyen</th><th>PR Récent</th><th>Adaptation</th><th>SF</th><th>Conf.</th><th>Courses</th></tr></thead><tbody>';
                 analyses.forEach((a, i) => {
                     const s = a.score || {};
                     const c = s.components || {};
                     const r = a.ratings || {};
-                    const ecart = (a.score.score - bestScore).toFixed(2);
-                    const tend = r.rating_tendance < 0 ? '↘' : (r.rating_tendance > 0 ? '↗' : '→');
-                    rankingHtml += `<tr><td class="rank-col">${i+1}</td><td>${a.attitude.numPmu}</td><td><strong>${a.attitude.nom}</strong></td><td class="score-total">${a.score.score}</td><td>+${ecart}</td><td>${c.rating_moyen || 'N/A'}</td><td>${c.rating_recent || 'N/A'}</td><td>${c.rating_adaptation || 'N/A'}</td><td>${tend} ${r.rating_tendance || 0}</td><td>${r.rating_fiabilite || 'N/A'}</td><td>${r.total_courses}</td></tr>`;
+                    const ecart = a.ecart_longueurs ?? '?';
+                    const ecartTxt = ecart > 0 ? `+${ecart} L` : (ecart == 0 ? '0 L' : 'N/A');
+                    const tend = r.tendance < 0 ? '↘' : (r.tendance > 0 ? '↗' : '→');
+                    const conf = s.indice_confiance ?? 0;
+                    rankingHtml += `<tr><td class="rank-col">${i+1}</td><td>${a.attitude.numPmu}</td><td><strong>${a.attitude.nom}</strong></td><td class="score-total">${s.score}</td><td>${ecartTxt}</td><td>${c.pra_moyen || 'N/A'}</td><td>${c.pra_recent || 'N/A'}</td><td>${c.pra_adaptation || 'N/A'}</td><td>${r.sf_moyen || 'N/A'}</td><td class="conf-${conf >= 70 ? 'high' : (conf >= 40 ? 'mid' : 'low')}">${conf}%</td><td>${r.total_courses}</td></tr>`;
                 });
                 rankingHtml += '</tbody></table></div>';
             }
@@ -233,8 +239,12 @@
                 const card = document.createElement('div');
                 card.className = 'horse-card';
 
-                const ecart = (s.score - bestScore).toFixed(2);
-                const tend = r.rating_tendance < 0 ? '↘ Amélioration' : (r.rating_tendance > 0 ? '↗ Baisse' : '→ Stable');
+                const ecart = a.ecart_longueurs ?? '?';
+                const ecartTxt = ecart > 0 ? `+${ecart} longueurs` : (ecart == 0 ? '0 longueur' : 'N/A');
+                const tend = r.tendance < 0 ? '↘ Amélioration' : (r.tendance > 0 ? '↗ Baisse' : '→ Stable');
+                const conf = s.indice_confiance ?? 0;
+                const confClass = conf >= 70 ? 'high' : (conf >= 40 ? 'mid' : 'low');
+                const confLabel = conf >= 70 ? 'Fiable' : (conf >= 40 ? 'Moyen' : 'Incertain');
 
                 let html = `
                     <div class="rank-badge" title="Rang ${idx+1}">${idx+1}</div>
@@ -254,8 +264,12 @@
                         <div class="score-box">
                             <div class="score-label">Score PR</div>
                             <div class="score-value">${s.score || 'N/A'}</div>
-                            <div class="score-detail">+${ecart} vs 1er</div>
+                            <div class="score-detail">${ecartTxt}</div>
                         </div>
+                    </div>
+                    <div class="confiance-row">
+                        <div class="conf-label">Indice de confiance: ${confLabel} (${conf}%)</div>
+                        <div class="confiance-bar ${confClass}"><div class="conf-fill" style="width:${conf}%"></div></div>
                     </div>
                 `;
 
@@ -265,11 +279,12 @@
                     html += `<div class="score-breakdown">
                         <h4>Breakdown du Score</h4>
                         <div class="breakdown-grid">
-                            <div class="bd-item"><div class="bd-label">Rating Moyen (35%)</div><div class="bd-val">${c.rating_moyen}</div><div class="bd-sub">Temps ajusté moyen</div></div>
-                            <div class="bd-item"><div class="bd-label">Rating Récent (30%)</div><div class="bd-val">${c.rating_recent}</div><div class="bd-sub">3 dernières courses</div></div>
-                            <div class="bd-item"><div class="bd-label">Adaptation (20%)</div><div class="bd-val">${c.rating_adaptation}</div><div class="bd-sub">Corde, dist, jockey, hippo</div></div>
-                            <div class="bd-item ${r.rating_tendance < 0 ? 'positive' : (r.rating_tendance > 0 ? 'negative' : '')}"><div class="bd-label">Tendance</div><div class="bd-val">${tend}</div><div class="bd-sub">${r.rating_tendance || 0}</div></div>
-                            <div class="bd-item"><div class="bd-label">Fiabilité</div><div class="bd-val">${r.rating_fiabilite}</div><div class="bd-sub">Écart-type des PR</div></div>
+                            <div class="bd-item"><div class="bd-label">PR Moyen (30%)</div><div class="bd-val">${c.pra_moyen}</div><div class="bd-sub">Temps ajusté moyen</div></div>
+                            <div class="bd-item"><div class="bd-label">PR Récent (30%)</div><div class="bd-val">${c.pra_recent}</div><div class="bd-sub">3 dernières courses</div></div>
+                            <div class="bd-item"><div class="bd-label">Adaptation (20%)</div><div class="bd-val">${c.pra_adaptation}</div><div class="bd-sub">Corde, dist, jockey, hippo</div></div>
+                            <div class="bd-item ${r.tendance < 0 ? 'positive' : (r.tendance > 0 ? 'negative' : '')}"><div class="bd-label">Tendance</div><div class="bd-val">${tend}</div><div class="bd-sub">${r.tendance || 0} s/km/course</div></div>
+                            <div class="bd-item"><div class="bd-label">Fiabilité</div><div class="bd-val">${r.fiabilite || 'N/A'}</div><div class="bd-sub">Écart-type des PR</div></div>
+                            <div class="bd-item"><div class="bd-label">Speed Figure</div><div class="bd-val">${r.sf_moyen || 'N/A'}</div><div class="bd-sub">SF récent: ${r.sf_recent || 'N/A'}</div></div>
                         </div>
                     </div>`;
                 }
@@ -280,17 +295,27 @@
                         <thead><tr><th>Critère</th><th>Valeur</th><th>Courses</th><th>PR</th><th>vs Moyen</th></tr></thead><tbody>`;
                     ad.details.forEach(d => {
                         const cls = d.delta < 0 ? 'positive' : (d.delta > 0 ? 'negative' : '');
-                        html += `<tr><td><strong>${d.nom}</strong></td><td>${d.valeur}</td><td>${d.courses}</td><td>${d.pr}</td><td class="${cls}">${d.delta > 0 ? '+' : ''}${d.delta}</td></tr>`;
+                        html += `<tr><td><strong>${d.nom}</strong></td><td>${d.valeur}</td><td>${d.courses}</td><td>${d.pra}</td><td class="${cls}">${d.delta > 0 ? '+' : ''}${d.delta}</td></tr>`;
                     });
-                    html += `<tr class="total-row"><td colspan="3"><strong>PR Adaptation moyen</strong></td><td colspan="2"><strong>${ad.rating_adaptation}</strong></td></tr>`;
+                    html += `<tr class="total-row"><td colspan="3"><strong>PR Adaptation moyen</strong></td><td colspan="2"><strong>${ad.pra_adaptation}</strong></td></tr>`;
                     html += `</tbody></table></div>`;
                 }
 
-                // Historique des courses avec PR
+                // Stats PR globales
+                html += `<div class="temps-stats">
+                    <div class="temps-stat"><div class="ts-label">PR Moyen</div><div class="ts-val">${r.pra_moyen || 'N/A'}</div><div class="ts-sub">${r.total_courses} courses</div></div>
+                    <div class="temps-stat"><div class="ts-label">PR Médiane</div><div class="ts-val">${r.pra_mediane || 'N/A'}</div><div class="ts-sub">Valeur centrale</div></div>
+                    <div class="temps-stat"><div class="ts-label">PR Min (Record)</div><div class="ts-val">${r.pra_min || 'N/A'}</div><div class="ts-sub">Meilleure perf</div></div>
+                    <div class="temps-stat"><div class="ts-label">PR Max</div><div class="ts-val">${r.pra_max || 'N/A'}</div><div class="ts-sub">Pire perf</div></div>
+                    <div class="temps-stat"><div class="ts-label">Speed Figure</div><div class="ts-val">${r.sf_moyen || 'N/A'}</div><div class="ts-sub">Beyer-like</div></div>
+                    <div class="temps-stat"><div class="ts-label">Adaptation</div><div class="ts-val">${ad.adaptation_score || 0}</div><div class="ts-sub">/100</div></div>
+                </div>`;
+
+                // Historique des courses avec PR et SF
                 if (r.details && r.details.length > 0) {
                     html += `<div class="history"><h4>Historique des courses (Performance Rating)</h4><table>
                         <thead>
-                            <tr><th>Date</th><th>Hippodrome</th><th>Dist.</th><th>Disc.</th><th>Place</th><th>Terrain</th><th>Corde</th><th>Poids</th><th>Jockey</th><th>Temps/km</th><th>PR</th></tr>
+                            <tr><th>Date</th><th>Hippodrome</th><th>Dist.</th><th>Disc.</th><th>Place</th><th>Terrain</th><th>Corde</th><th>Poids</th><th>Jockey</th><th>Temps/km</th><th>PR</th><th>SF</th></tr>
                         </thead><tbody>`;
                     r.details.forEach(d => {
                         const date = d.date ? new Date(d.date).toLocaleDateString('fr-FR') : 'N/A';
@@ -304,8 +329,9 @@
                             <td>${d.corde || ''}</td>
                             <td>${d.poidsJockey ? (d.poidsJockey + 'kg') : ''}</td>
                             <td>${d.nomJockey || ''}</td>
-                            <td class="temps-km">${d.temps_au_km ? formatTempsKm(d.temps_au_km) : 'N/A'}</td>
-                            <td class="pr-val">${d.pr}</td>
+                            <td class="temps-km">${formatTempsKm(d.takm)}</td>
+                            <td class="pr-val">${d.pra}</td>
+                            <td class="sf-val">${d.sf}</td>
                         </tr>`;
                     });
                     html += `</tbody></table></div>`;
