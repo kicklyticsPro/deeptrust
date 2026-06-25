@@ -187,29 +187,29 @@
 
             // --- Classement ---
             let rankingHtml = '';
-            if (analyses[0].rating) {
+            if (analyses[0].moyenne !== undefined) {
                 rankingHtml += '<div class="podium">';
                 for (let i = 0; i < Math.min(3, analyses.length); i++) {
                     const a = analyses[i];
-                    const r = a.rating || {};
                     const cls = i === 0 ? 'first' : (i === 1 ? 'second' : 'third');
+                    const criteres = a.criteres || [];
+                    const criteresTxt = criteres.slice(0, 3).map(c => `${c.nom}: ${c.pct}%`).join(' · ');
                     rankingHtml += `
                         <div class="podium-item ${cls}">
                             <div class="rank">${i+1}</div>
                             <div class="podium-name">${a.attitude.nom || 'N/A'} <span class="podium-num">N°${a.attitude.numPmu}</span></div>
-                            <div class="podium-score">${r.total || 0}</div>
-                            <div class="podium-detail">
-                                G:${r.global||0} Ré:${r.recent||0} Mus:${r.musique||0} Adap:${r.adaptation||0} BM:${r.bonus||0}
-                            </div>
+                            <div class="podium-score">${a.moyenne || 0}%</div>
+                            <div class="podium-detail">${criteresTxt}</div>
                         </div>
                     `;
                 }
                 rankingHtml += '</div>';
 
-                rankingHtml += '<div class="rank-table"><h3>Classement complet</h3><table><thead><tr><th>Rang</th><th>N°</th><th>Nom</th><th>Rating</th><th>Global</th><th>Récent</th><th>Musique</th><th>Adaptation</th><th>Bonus</th></tr></thead><tbody>';
+                rankingHtml += '<div class="rank-table"><h3>Classement complet</h3><table><thead><tr><th>Rang</th><th>N°</th><th>Nom</th><th>Moyenne %</th><th>Courses</th><th>V</th><th>P123</th><th>Critères analysés</th></tr></thead><tbody>';
                 analyses.forEach((a, i) => {
-                    const r = a.rating || {};
-                    rankingHtml += `<tr><td class="rank-col">${i+1}</td><td>${a.attitude.numPmu}</td><td><strong>${a.attitude.nom}</strong></td><td class="score-total">${r.total || 0}</td><td>${r.global || 0}</td><td>${r.recent || 0}</td><td>${r.musique || 0}</td><td>${r.adaptation || 0}</td><td>${r.bonus || 0}</td></tr>`;
+                    const g = a.global || {};
+                    const nbCrit = (a.criteres || []).length;
+                    rankingHtml += `<tr><td class="rank-col">${i+1}</td><td>${a.attitude.numPmu}</td><td><strong>${a.attitude.nom}</strong></td><td class="score-total">${a.moyenne || 0}%</td><td>${g.total || 0}</td><td>${g.victoires || 0}</td><td>${g.places123 || 0}</td><td>${nbCrit}</td></tr>`;
                 });
                 rankingHtml += '</tbody></table></div>';
             }
@@ -220,21 +220,19 @@
             // --- Cartes détaillées ---
             analyses.forEach((a, idx) => {
                 const att = a.attitude;
-                const glob = a.global;
-                const recent = a.recent || {};
-                const r = a.rating || {};
+                const glob = a.global || {};
                 const card = document.createElement('div');
                 card.className = 'horse-card';
 
                 let rankBadge = '';
-                if (a.rating) {
+                if (a.moyenne !== undefined) {
                     rankBadge = `<div class="rank-badge" title="Rang ${idx+1}">${idx+1}</div>`;
                 }
                 let scoreBar = '';
-                if (a.rating) {
-                    const maxRating = Math.max(...analyses.map(x => x.rating?.total || 0));
-                    const pct = maxRating > 0 ? Math.min(100, Math.max(0, (r.total / maxRating) * 100)) : 0;
-                    scoreBar = `<div class="score-bar-wrap"><div class="score-bar" style="width:${pct}%"></div><div class="score-bar-label">Rating : ${r.total}</div></div>`;
+                if (a.moyenne !== undefined) {
+                    const maxMoy = Math.max(...analyses.map(x => x.moyenne || 0));
+                    const pct = maxMoy > 0 ? Math.min(100, Math.max(0, (a.moyenne / maxMoy) * 100)) : 0;
+                    scoreBar = `<div class="score-bar-wrap"><div class="score-bar" style="width:${pct}%"></div><div class="score-bar-label">Moyenne : ${a.moyenne}%</div></div>`;
                 }
 
                 let html = `${rankBadge}
@@ -258,63 +256,46 @@
                         </div>
                     </div>
                     ${scoreBar}
-                    <div class="stats-grid">
-                        <div class="stat-box">
-                            <div class="stat-title">Score Global (toutes les courses)</div>
-                            <div class="stat-body">
-                                <div><strong>Courses:</strong> ${glob.total || 0}</div>
-                                <div><strong>Score moy.:</strong> ${glob.score || 0} / 25</div>
-                                <div><strong>Victoires:</strong> ${glob.nb_victoires || 0}</div>
-                                <div><strong>Places 1-2-3:</strong> ${glob.nb_places || 0}</div>
-                                <div><strong>Place moy.:</strong> ${glob.place_moy || 'N/A'}</div>
-                                <div><strong>Gains carrière:</strong> ${att.gainsCarriere ? (att.gainsCarriere/100).toLocaleString('fr-FR') + ' €' : 'N/A'}</div>
-                            </div>
-                        </div>
-                        <div class="stat-box">
-                            <div class="stat-title">Forme Récente (5 dernières)</div>
-                            <div class="stat-body">
-                                <div><strong>Courses:</strong> ${recent.total || 0}</div>
-                                <div><strong>Score moy.:</strong> ${recent.score || 0} / 25</div>
-                                <div><strong>Victoires:</strong> ${recent.nb_victoires || 0}</div>
-                                <div><strong>Places 1-2-3:</strong> ${recent.nb_places || 0}</div>
-                                <div><strong>Place moy.:</strong> ${recent.place_moy || 'N/A'}</div>
-                            </div>
-                        </div>
                 `;
 
-                html += buildCritereBox('Corde', a.byCorde, att.corde);
-                html += buildCritereBox('Distance', a.byDistance, null);
-                html += buildCritereBox('Discipline', a.byDiscipline, null);
-                html += buildCritereBox('Jockey', a.byJockey, att.jockey);
-                html += buildCritereBox('Hippodrome', a.byHippodrome, null);
-                html += buildCritereBox('Terrain', a.byTerrain, null);
-
-                html += `</div>`; // close stats-grid
-
-                // Rating breakdown
-                if (a.rating) {
-                    const ad = r.adaptation_details || {};
-                    html += `<div class="score-breakdown">
-                        <h4>Rating Breakdown</h4>
-                        <div class="breakdown-grid">
-                            <div class="bd-item"><div class="bd-label">Global (25%)</div><div class="bd-val">${r.global || 0}</div></div>
-                            <div class="bd-item"><div class="bd-label">Récent (30%)</div><div class="bd-val">${r.recent || 0}</div></div>
-                            <div class="bd-item"><div class="bd-label">Musique (15%)</div><div class="bd-val">${r.musique || 0}</div></div>
-                            <div class="bd-item"><div class="bd-label">Adaptation (30%)</div><div class="bd-val">${r.adaptation || 0}</div><div class="bd-sub">${Object.entries(ad).map(([k,v]) => k + ':' + v).join(' ')}</div></div>
-                            <div class="bd-item ${r.bonus >= 0 ? 'positive' : 'negative'}"><div class="bd-label">Bonus/Malus</div><div class="bd-val">${r.bonus > 0 ? '+' : ''}${r.bonus || 0}</div></div>
-                        </div>
-                    </div>`;
+                // Tableau des critères
+                if (a.criteres && a.criteres.length > 0) {
+                    html += `<div class="criteres-table"><h4>% de réussite par critère (course du jour)</h4><table class="crit-table">
+                        <thead><tr><th>Critère</th><th>Valeur</th><th>Courses</th><th>% Réussite</th></tr></thead><tbody>`;
+                    a.criteres.forEach(c => {
+                        html += `<tr><td><strong>${c.nom}</strong></td><td>${c.valeur}</td><td>${c.total}</td><td class="pct-${c.pct >= 50 ? 'high' : (c.pct >= 25 ? 'mid' : 'low')}">${c.pct}%</td></tr>`;
+                    });
+                    html += `<tr class="total-row"><td colspan="3"><strong>MOYENNE</strong></td><td class="pct-${a.moyenne >= 50 ? 'high' : (a.moyenne >= 25 ? 'mid' : 'low')}"><strong>${a.moyenne}%</strong></td></tr>`;
+                    html += `</tbody></table></div>`;
+                } else if (glob.total === 0) {
+                    html += `<div class="no-criteres">🆕 Cheval inédit - aucune course dans l'historique</div>`;
+                } else {
+                    html += `<div class="no-criteres">Aucun critère de la course du jour trouvé dans l'historique</div>`;
                 }
+
+                // Stats globales
+                html += `<div class="stats-grid">
+                    <div class="stat-box">
+                        <div class="stat-title">Global</div>
+                        <div class="stat-body">
+                            <div><strong>Total:</strong> ${glob.total || 0}</div>
+                            <div><strong>Victoires:</strong> ${glob.victoires || 0}</div>
+                            <div><strong>Places 1-2-3:</strong> ${glob.places123 || 0}</div>
+                            <div><strong>Place moy.:</strong> ${glob.place_moy || 'N/A'}</div>
+                            <div><strong>% Réussite:</strong> ${glob.pct_reussite || 0}%</div>
+                            <div><strong>Gains:</strong> ${att.gainsCarriere ? (att.gainsCarriere/100).toLocaleString('fr-FR') + ' €' : 'N/A'}</div>
+                        </div>
+                    </div>
+                </div>`;
 
                 // Historique détaillé
                 if (a.history && a.history.length > 0) {
                     html += `<div class="history"><h4>10 dernières courses</h4><table>
                         <thead>
-                            <tr><th>Date</th><th>Hippodrome</th><th>Prix</th><th>Disc.</th><th>Dist.</th><th>Terrain</th><th>Corde</th><th>Poids</th><th>Jockey</th><th>Place</th><th>Points</th><th>Statut</th></tr>
+                            <tr><th>Date</th><th>Hippodrome</th><th>Prix</th><th>Disc.</th><th>Dist.</th><th>Terrain</th><th>Corde</th><th>Poids</th><th>Jockey</th><th>Place</th><th>Statut</th></tr>
                         </thead><tbody>`;
                     a.history.forEach(h => {
                         const d = h.date ? new Date(h.date).toLocaleDateString('fr-FR') : 'N/A';
-                        const pts = h.place !== undefined ? pointsPmu(h.place) : 0;
                         html += `<tr>
                             <td>${d}</td>
                             <td>${h.hippodrome || ''}</td>
@@ -326,7 +307,6 @@
                             <td>${h.poidsJockey ? (h.poidsJockey + ' kg') : ''}</td>
                             <td>${h.nomJockey || ''}</td>
                             <td class="place-${h.place === 1 ? '1' : (h.place && h.place <= 3 ? '3' : '')}">${h.place || '-'}</td>
-                            <td>${pts}</td>
                             <td>${h.statusArrivee || ''}</td>
                         </tr>`;
                     });
@@ -341,42 +321,6 @@
             results.classList.remove('hidden');
         }
 
-        function pointsPmu(place) {
-            if (place === null || place === undefined) return 0;
-            if (place === 1) return 25;
-            if (place === 2) return 20;
-            if (place === 3) return 16;
-            if (place === 4) return 13;
-            if (place === 5) return 11;
-            if (place === 6) return 10;
-            if (place === 7) return 9;
-            if (place === 8) return 8;
-            if (place === 9) return 7;
-            if (place === 10) return 6;
-            if (place <= 15) return 3;
-            return 1;
-        }
-
-        function buildCritereBox(title, data, currentValue) {
-            if (!data || Object.keys(data).length === 0) return '';
-            let rows = '';
-            Object.entries(data).forEach(([k, v]) => {
-                const highlight = (currentValue !== null && String(k) === String(currentValue)) ? 'highlight' : '';
-                rows += `<tr class="${highlight}"><td>${k}</td><td>${v.total || 0}</td><td>${v.score || 0}</td><td>${v.nb_victoires || 0}</td><td>${v.nb_places || 0}</td><td>${v.place_moy || 'N/A'}</td><td>${v.delta > 0 ? '+' : ''}${v.delta || 0}</td></tr>`;
-            });
-            return `
-                <div class="stat-box">
-                    <div class="stat-title">${title}</div>
-                    <div class="stat-body small">
-                        <table class="mini-table">
-                            <thead><tr><th>Critère</th><th>Total</th><th>Score</th><th>V</th><th>P123</th><th>Pl.Moy</th><th>Delta</th></tr></thead>
-                            <tbody>${rows}</tbody>
-                        </table>
-                    </div>
-                </div>
-            `;
-        }
-
         dateInput.addEventListener('change', loadReunions);
         reunionSelect.addEventListener('change', populateCourses);
         courseSelect.addEventListener('change', updateCourseInfo);
@@ -384,5 +328,5 @@
 
         loadReunions();
     </script>
-<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a113de307958d152',t:'MTc4MjM4OTQxNA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</body>
 </html>
