@@ -60,7 +60,6 @@
         const courseMeta = document.getElementById('courseMeta');
         const results = document.getElementById('results');
 
-        // Date par défaut aujourd'hui
         const today = new Date();
         const dd = String(today.getDate()).padStart(2, '0');
         const mm = String(today.getMonth() + 1).padStart(2, '0');
@@ -97,6 +96,7 @@
             selectedCourseData = null;
             courseInfo.classList.add('hidden');
             results.classList.add('hidden');
+            document.getElementById('ranking').classList.add('hidden');
 
             reunionsData.forEach(r => {
                 const opt = document.createElement('option');
@@ -111,6 +111,7 @@
             selectedCourseData = null;
             courseInfo.classList.add('hidden');
             results.classList.add('hidden');
+            document.getElementById('ranking').classList.add('hidden');
 
             const numReunion = reunionSelect.value;
             const reunion = reunionsData.find(r => String(r.numOfficiel) === numReunion);
@@ -157,6 +158,7 @@
             loading.classList.remove('hidden');
             errorMsg.classList.add('hidden');
             results.classList.add('hidden');
+            document.getElementById('ranking').classList.add('hidden');
             try {
                 const res = await fetch(`/api/analyse?date=${date}&reunion=${reunion}&course=${course}`);
                 const data = await res.json();
@@ -185,30 +187,29 @@
 
             // --- Classement ---
             let rankingHtml = '';
-            if (analyses[0].scores) {
+            if (analyses[0].rating) {
                 rankingHtml += '<div class="podium">';
                 for (let i = 0; i < Math.min(3, analyses.length); i++) {
                     const a = analyses[i];
-                    const s = a.scores || {};
+                    const r = a.rating || {};
                     const cls = i === 0 ? 'first' : (i === 1 ? 'second' : 'third');
                     rankingHtml += `
                         <div class="podium-item ${cls}">
                             <div class="rank">${i+1}</div>
                             <div class="podium-name">${a.attitude.nom || 'N/A'} <span class="podium-num">N°${a.attitude.numPmu}</span></div>
-                            <div class="podium-score">${s.total || 0}</div>
-                        <div class="podium-detail">
-                            Exp:${s.experience_total||0} Réc:${s.recente||0} Mus:${s.musique||0}
-                            Adap:${s.adaptation||0} BM:${s.bonus_malus||0}
-                        </div>
+                            <div class="podium-score">${r.total || 0}</div>
+                            <div class="podium-detail">
+                                G:${r.global||0} Ré:${r.recent||0} Mus:${r.musique||0} Adap:${r.adaptation||0} BM:${r.bonus||0}
+                            </div>
                         </div>
                     `;
                 }
                 rankingHtml += '</div>';
 
-                rankingHtml += '<div class="rank-table"><h3>Classement complet</h3><table><thead><tr><th>Rang</th><th>N°</th><th>Nom</th><th>Score</th><th>Expérience</th><th>Régularité</th><th>Récente</th><th>Musique</th><th>Adaptation</th><th>Bonus/Malus</th></tr></thead><tbody>';
+                rankingHtml += '<div class="rank-table"><h3>Classement complet</h3><table><thead><tr><th>Rang</th><th>N°</th><th>Nom</th><th>Rating</th><th>Global</th><th>Récent</th><th>Musique</th><th>Adaptation</th><th>Bonus</th></tr></thead><tbody>';
                 analyses.forEach((a, i) => {
-                    const s = a.scores || {};
-                    rankingHtml += `<tr><td class="rank-col">${i+1}</td><td>${a.attitude.numPmu}</td><td><strong>${a.attitude.nom}</strong></td><td class="score-total">${s.total || 0}</td><td>${s.experience_total || 0}</td><td>${s.regularite || 0}</td><td>${s.recente || 0}</td><td>${s.musique || 0}</td><td>${s.adaptation || 0}</td><td>${s.bonus_malus || 0}</td></tr>`;
+                    const r = a.rating || {};
+                    rankingHtml += `<tr><td class="rank-col">${i+1}</td><td>${a.attitude.numPmu}</td><td><strong>${a.attitude.nom}</strong></td><td class="score-total">${r.total || 0}</td><td>${r.global || 0}</td><td>${r.recent || 0}</td><td>${r.musique || 0}</td><td>${r.adaptation || 0}</td><td>${r.bonus || 0}</td></tr>`;
                 });
                 rankingHtml += '</tbody></table></div>';
             }
@@ -220,18 +221,20 @@
             analyses.forEach((a, idx) => {
                 const att = a.attitude;
                 const glob = a.global;
-                const s = a.scores || {};
+                const recent = a.recent || {};
+                const r = a.rating || {};
                 const card = document.createElement('div');
                 card.className = 'horse-card';
 
                 let rankBadge = '';
-                if (a.scores) {
+                if (a.rating) {
                     rankBadge = `<div class="rank-badge" title="Rang ${idx+1}">${idx+1}</div>`;
                 }
                 let scoreBar = '';
-                if (a.scores) {
-                    const pct = Math.min(100, Math.max(0, (s.total || 0) / 100 * 100));
-                    scoreBar = `<div class="score-bar-wrap"><div class="score-bar" style="width:${pct}%"></div><div class="score-bar-label">Score : ${s.total}</div></div>`;
+                if (a.rating) {
+                    const maxRating = Math.max(...analyses.map(x => x.rating?.total || 0));
+                    const pct = maxRating > 0 ? Math.min(100, Math.max(0, (r.total / maxRating) * 100)) : 0;
+                    scoreBar = `<div class="score-bar-wrap"><div class="score-bar" style="width:${pct}%"></div><div class="score-bar-label">Rating : ${r.total}</div></div>`;
                 }
 
                 let html = `${rankBadge}
@@ -257,15 +260,24 @@
                     ${scoreBar}
                     <div class="stats-grid">
                         <div class="stat-box">
-                            <div class="stat-title">Global</div>
+                            <div class="stat-title">Score Global (toutes les courses)</div>
                             <div class="stat-body">
-                                <div><strong>Total:</strong> ${glob.totalCourses || 0}</div>
-                                <div><strong>Victoires:</strong> ${glob.victoires || 0} (${glob.pctVictoire || 0}%)</div>
-                                <div><strong>Places 1-2-3:</strong> ${glob.places123 || 0} (${glob.pctPlace || 0}%)</div>
-                                <div><strong>Place moy.:</strong> ${glob.placeMoyenne || 'N/A'}</div>
-                                <div><strong>Victoires (5 dernières):</strong> ${glob.victoiresLast5 || 0}</div>
-                                <div><strong>Places (5 dernières):</strong> ${glob.placesLast5 || 0}</div>
+                                <div><strong>Courses:</strong> ${glob.total || 0}</div>
+                                <div><strong>Score moy.:</strong> ${glob.score || 0} / 25</div>
+                                <div><strong>Victoires:</strong> ${glob.nb_victoires || 0}</div>
+                                <div><strong>Places 1-2-3:</strong> ${glob.nb_places || 0}</div>
+                                <div><strong>Place moy.:</strong> ${glob.place_moy || 'N/A'}</div>
                                 <div><strong>Gains carrière:</strong> ${att.gainsCarriere ? (att.gainsCarriere/100).toLocaleString('fr-FR') + ' €' : 'N/A'}</div>
+                            </div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-title">Forme Récente (5 dernières)</div>
+                            <div class="stat-body">
+                                <div><strong>Courses:</strong> ${recent.total || 0}</div>
+                                <div><strong>Score moy.:</strong> ${recent.score || 0} / 25</div>
+                                <div><strong>Victoires:</strong> ${recent.nb_victoires || 0}</div>
+                                <div><strong>Places 1-2-3:</strong> ${recent.nb_places || 0}</div>
+                                <div><strong>Place moy.:</strong> ${recent.place_moy || 'N/A'}</div>
                             </div>
                         </div>
                 `;
@@ -279,18 +291,17 @@
 
                 html += `</div>`; // close stats-grid
 
-                // Breakdown du score
-                if (a.scores) {
-                    const s = a.scores;
-                    const bd = s.bonus_details || {};
+                // Rating breakdown
+                if (a.rating) {
+                    const ad = r.adaptation_details || {};
                     html += `<div class="score-breakdown">
-                        <h4>Breakdown du score</h4>
+                        <h4>Rating Breakdown</h4>
                         <div class="breakdown-grid">
-                            <div class="bd-item"><div class="bd-label">Expérience</div><div class="bd-val">${s.experience_total || 0}</div><div class="bd-sub">Exp:${s.experience||0} Rég:${s.regularite||0}</div></div>
-                            <div class="bd-item"><div class="bd-label">Forme récente</div><div class="bd-val">${s.recente || 0}</div></div>
-                            <div class="bd-item"><div class="bd-label">Musique</div><div class="bd-val">${s.musique || 0}</div></div>
-                            <div class="bd-item"><div class="bd-label">Adaptation</div><div class="bd-val">${s.adaptation || 0}</div><div class="bd-sub">Corde:${s.corde||0} Dist:${s.distance||0} Disc:${s.discipline||0} Hippo:${s.hippodrome||0} Jock:${s.jockey||0}</div></div>
-                            <div class="bd-item ${s.bonus_malus >= 0 ? 'positive' : 'negative'}"><div class="bd-label">Bonus/Malus</div><div class="bd-val">${s.bonus_malus > 0 ? '+' : ''}${s.bonus_malus || 0}</div><div class="bd-sub">${bd.inedit !== undefined ? 'Inédit:' + bd.inedit : ''} ${bd.jockey_change !== undefined ? 'Jock.change:' + bd.jockey_change : ''} ${bd.gains !== undefined ? 'Gains:' + bd.gains : ''} ${bd.place_moyenne !== undefined ? 'Pl.moy:' + bd.place_moyenne : ''} ${bd.derniere_victoire !== undefined ? 'Dern.vict:' + bd.derniere_victoire : ''}</div></div>
+                            <div class="bd-item"><div class="bd-label">Global (25%)</div><div class="bd-val">${r.global || 0}</div></div>
+                            <div class="bd-item"><div class="bd-label">Récent (30%)</div><div class="bd-val">${r.recent || 0}</div></div>
+                            <div class="bd-item"><div class="bd-label">Musique (15%)</div><div class="bd-val">${r.musique || 0}</div></div>
+                            <div class="bd-item"><div class="bd-label">Adaptation (30%)</div><div class="bd-val">${r.adaptation || 0}</div><div class="bd-sub">${Object.entries(ad).map(([k,v]) => k + ':' + v).join(' ')}</div></div>
+                            <div class="bd-item ${r.bonus >= 0 ? 'positive' : 'negative'}"><div class="bd-label">Bonus/Malus</div><div class="bd-val">${r.bonus > 0 ? '+' : ''}${r.bonus || 0}</div></div>
                         </div>
                     </div>`;
                 }
@@ -299,10 +310,11 @@
                 if (a.history && a.history.length > 0) {
                     html += `<div class="history"><h4>10 dernières courses</h4><table>
                         <thead>
-                            <tr><th>Date</th><th>Hippodrome</th><th>Prix</th><th>Disc.</th><th>Dist.</th><th>Terrain</th><th>Corde</th><th>Poids</th><th>Jockey</th><th>Place</th><th>Statut</th></tr>
+                            <tr><th>Date</th><th>Hippodrome</th><th>Prix</th><th>Disc.</th><th>Dist.</th><th>Terrain</th><th>Corde</th><th>Poids</th><th>Jockey</th><th>Place</th><th>Points</th><th>Statut</th></tr>
                         </thead><tbody>`;
                     a.history.forEach(h => {
                         const d = h.date ? new Date(h.date).toLocaleDateString('fr-FR') : 'N/A';
+                        const pts = h.place !== undefined ? pointsPmu(h.place) : 0;
                         html += `<tr>
                             <td>${d}</td>
                             <td>${h.hippodrome || ''}</td>
@@ -314,6 +326,7 @@
                             <td>${h.poidsJockey ? (h.poidsJockey + ' kg') : ''}</td>
                             <td>${h.nomJockey || ''}</td>
                             <td class="place-${h.place === 1 ? '1' : (h.place && h.place <= 3 ? '3' : '')}">${h.place || '-'}</td>
+                            <td>${pts}</td>
                             <td>${h.statusArrivee || ''}</td>
                         </tr>`;
                     });
@@ -328,19 +341,35 @@
             results.classList.remove('hidden');
         }
 
+        function pointsPmu(place) {
+            if (place === null || place === undefined) return 0;
+            if (place === 1) return 25;
+            if (place === 2) return 20;
+            if (place === 3) return 16;
+            if (place === 4) return 13;
+            if (place === 5) return 11;
+            if (place === 6) return 10;
+            if (place === 7) return 9;
+            if (place === 8) return 8;
+            if (place === 9) return 7;
+            if (place === 10) return 6;
+            if (place <= 15) return 3;
+            return 1;
+        }
+
         function buildCritereBox(title, data, currentValue) {
             if (!data || Object.keys(data).length === 0) return '';
             let rows = '';
             Object.entries(data).forEach(([k, v]) => {
                 const highlight = (currentValue !== null && String(k) === String(currentValue)) ? 'highlight' : '';
-                rows += `<tr class="${highlight}"><td>${k}</td><td>${v.total}</td><td>${v.victoires}</td><td>${v.pctVictoire}%</td><td>${v.places123}</td><td>${v.pctPlace}%</td><td>${v.placeMoyenne || 'N/A'}</td></tr>`;
+                rows += `<tr class="${highlight}"><td>${k}</td><td>${v.total || 0}</td><td>${v.score || 0}</td><td>${v.nb_victoires || 0}</td><td>${v.nb_places || 0}</td><td>${v.place_moy || 'N/A'}</td><td>${v.delta > 0 ? '+' : ''}${v.delta || 0}</td></tr>`;
             });
             return `
                 <div class="stat-box">
                     <div class="stat-title">${title}</div>
                     <div class="stat-body small">
                         <table class="mini-table">
-                            <thead><tr><th>Critère</th><th>Total</th><th>V</th><th>%V</th><th>P123</th><th>%P</th><th>Pl.Moy</th></tr></thead>
+                            <thead><tr><th>Critère</th><th>Total</th><th>Score</th><th>V</th><th>P123</th><th>Pl.Moy</th><th>Delta</th></tr></thead>
                             <tbody>${rows}</tbody>
                         </table>
                     </div>
@@ -353,8 +382,7 @@
         courseSelect.addEventListener('change', updateCourseInfo);
         loadBtn.addEventListener('click', loadAnalysis);
 
-        // Charger au démarrage
         loadReunions();
     </script>
-</body>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a113de307958d152',t:'MTc4MjM4OTQxNA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
