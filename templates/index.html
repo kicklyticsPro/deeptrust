@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Analyse Turf - Temps de Course</title>
+    <title>Analyse Turf - Performance Rating</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>🏇 Analyse Turf - Temps de Course</h1>
-            <p class="subtitle">Classement par temps au kilomètre calculé (pas de cotes)</p>
+            <h1>🏇 Analyse Turf - Performance Rating</h1>
+            <p class="subtitle">Méthode Timeform-like : temps ajustés par niveau, poids, terrain, distance, corde</p>
         </header>
 
         <section class="controls">
@@ -185,34 +185,38 @@
                 return;
             }
 
-            // Meilleur temps pour l'écart
-            const bestTemps = analyses[0]?.temps?.temps_estime || 0;
+            const bestScore = analyses[0]?.score?.score ?? 0;
 
             // --- Classement ---
             let rankingHtml = '';
-            if (analyses[0].temps?.temps_estime !== undefined) {
+            if (analyses[0].score) {
                 rankingHtml += '<div class="podium">';
                 for (let i = 0; i < Math.min(3, analyses.length); i++) {
                     const a = analyses[i];
-                    const t = a.temps || {};
-                    const ecart = t.temps_estime ? (t.temps_estime - bestTemps).toFixed(2) : '?';
+                    const s = a.score || {};
+                    const c = s.components || {};
+                    const ecart = (a.score.score - bestScore).toFixed(2);
                     const cls = i === 0 ? 'first' : (i === 1 ? 'second' : 'third');
                     rankingHtml += `
                         <div class="podium-item ${cls}">
                             <div class="rank">${i+1}</div>
                             <div class="podium-name">${a.attitude.nom || 'N/A'} <span class="podium-num">N°${a.attitude.numPmu}</span></div>
-                            <div class="podium-temps">${t.temps_estime_formatted || 'N/A'}/km</div>
-                            <div class="podium-detail">Écart: +${ecart}s/km · ${t.total_courses || 0} courses</div>
+                            <div class="podium-score">Score ${a.score.score}</div>
+                            <div class="podium-detail">+${ecart} vs 1er · ${a.ratings.total_courses} courses<br>
+                            Moy:${c.rating_moyen} Réc:${c.rating_recent} Adap:${c.rating_adaptation}</div>
                         </div>
                     `;
                 }
                 rankingHtml += '</div>';
 
-                rankingHtml += '<div class="rank-table"><h3>Classement par temps estimé au km</h3><table><thead><tr><th>Rang</th><th>N°</th><th>Nom</th><th>Temps estimé/km</th><th>Écart</th><th>Global</th><th>Même dist.</th><th>Récent</th><th>Courses</th></tr></thead><tbody>';
+                rankingHtml += '<div class="rank-table"><h3>Classement complet (Score Performance Rating)</h3><table><thead><tr><th>Rang</th><th>N°</th><th>Nom</th><th>Score</th><th>Écart</th><th>Moyen</th><th>Récent</th><th>Adaptation</th><th>Tendance</th><th>Fiabilité</th><th>Courses</th></tr></thead><tbody>';
                 analyses.forEach((a, i) => {
-                    const t = a.temps || {};
-                    const ecart = t.temps_estime ? (t.temps_estime - bestTemps).toFixed(2) : '?';
-                    rankingHtml += `<tr><td class="rank-col">${i+1}</td><td>${a.attitude.numPmu}</td><td><strong>${a.attitude.nom}</strong></td><td class="temps-total">${t.temps_estime_formatted || 'N/A'}</td><td>+${ecart}s</td><td>${t.temps_formatted || 'N/A'}</td><td>${t.temps_formatted_meme_distance || 'N/A'}</td><td>${t.temps_formatted_3_dernieres || 'N/A'}</td><td>${t.total_courses}</td></tr>`;
+                    const s = a.score || {};
+                    const c = s.components || {};
+                    const r = a.ratings || {};
+                    const ecart = (a.score.score - bestScore).toFixed(2);
+                    const tend = r.rating_tendance < 0 ? '↘' : (r.rating_tendance > 0 ? '↗' : '→');
+                    rankingHtml += `<tr><td class="rank-col">${i+1}</td><td>${a.attitude.numPmu}</td><td><strong>${a.attitude.nom}</strong></td><td class="score-total">${a.score.score}</td><td>+${ecart}</td><td>${c.rating_moyen || 'N/A'}</td><td>${c.rating_recent || 'N/A'}</td><td>${c.rating_adaptation || 'N/A'}</td><td>${tend} ${r.rating_tendance || 0}</td><td>${r.rating_fiabilite || 'N/A'}</td><td>${r.total_courses}</td></tr>`;
                 });
                 rankingHtml += '</tbody></table></div>';
             }
@@ -223,11 +227,14 @@
             // --- Cartes détaillées ---
             analyses.forEach((a, idx) => {
                 const att = a.attitude;
-                const t = a.temps || {};
+                const r = a.ratings || {};
+                const s = a.score || {};
+                const ad = a.adaptation || {};
                 const card = document.createElement('div');
                 card.className = 'horse-card';
 
-                const ecart = t.temps_estime ? (t.temps_estime - bestTemps).toFixed(2) : '?';
+                const ecart = (s.score - bestScore).toFixed(2);
+                const tend = r.rating_tendance < 0 ? '↘ Amélioration' : (r.rating_tendance > 0 ? '↗ Baisse' : '→ Stable');
 
                 let html = `
                     <div class="rank-badge" title="Rang ${idx+1}">${idx+1}</div>
@@ -244,69 +251,61 @@
                                 <span class="tag">${att.oeilleres || ''}</span>
                             </div>
                         </div>
-                        <div class="temps-box">
-                            <div class="temps-label">Temps estimé</div>
-                            <div class="temps-value">${t.temps_estime_formatted || 'N/A'}/km</div>
-                            <div class="temps-ecart">+${ecart}s vs meilleur</div>
-                        </div>
-                    </div>
-                    <div class="temps-stats">
-                        <div class="temps-stat">
-                            <div class="ts-label">Global</div>
-                            <div class="ts-val">${t.temps_formatted || 'N/A'}</div>
-                            <div class="ts-sub">${t.total_courses} courses</div>
-                        </div>
-                        <div class="temps-stat">
-                            <div class="ts-label">Même distance</div>
-                            <div class="ts-val">${t.temps_formatted_meme_distance || 'N/A'}</div>
-                            <div class="ts-sub">${t.courses_meme_distance} courses</div>
-                        </div>
-                        <div class="temps-stat">
-                            <div class="ts-label">Forme récente</div>
-                            <div class="ts-val">${t.temps_formatted_3_dernieres || 'N/A'}</div>
-                            <div class="ts-sub">3 dernières</div>
-                        </div>
-                        <div class="temps-stat">
-                            <div class="ts-label">Régularité</div>
-                            <div class="ts-val">${t.ecart_type || 'N/A'}s</div>
-                            <div class="ts-sub">Écart-type</div>
-                        </div>
-                        <div class="temps-stat">
-                            <div class="ts-label">Meilleur</div>
-                            <div class="ts-val">${t.temps_min ? formatTemps(t.temps_min) : 'N/A'}</div>
-                            <div class="ts-sub">Record</div>
-                        </div>
-                        <div class="temps-stat">
-                            <div class="ts-label">Pire</div>
-                            <div class="ts-val">${t.temps_max ? formatTemps(t.temps_max) : 'N/A'}</div>
-                            <div class="ts-sub">Pire perf</div>
+                        <div class="score-box">
+                            <div class="score-label">Score PR</div>
+                            <div class="score-value">${s.score || 'N/A'}</div>
+                            <div class="score-detail">+${ecart} vs 1er</div>
                         </div>
                     </div>
                 `;
 
-                // Historique détaillé avec temps
-                if (t.details && t.details.length > 0) {
-                    html += `<div class="history"><h4>Historique des courses (temps au km calculé)</h4><table>
+                // Breakdown des composants
+                if (s.components) {
+                    const c = s.components;
+                    html += `<div class="score-breakdown">
+                        <h4>Breakdown du Score</h4>
+                        <div class="breakdown-grid">
+                            <div class="bd-item"><div class="bd-label">Rating Moyen (35%)</div><div class="bd-val">${c.rating_moyen}</div><div class="bd-sub">Temps ajusté moyen</div></div>
+                            <div class="bd-item"><div class="bd-label">Rating Récent (30%)</div><div class="bd-val">${c.rating_recent}</div><div class="bd-sub">3 dernières courses</div></div>
+                            <div class="bd-item"><div class="bd-label">Adaptation (20%)</div><div class="bd-val">${c.rating_adaptation}</div><div class="bd-sub">Corde, dist, jockey, hippo</div></div>
+                            <div class="bd-item ${r.rating_tendance < 0 ? 'positive' : (r.rating_tendance > 0 ? 'negative' : '')}"><div class="bd-label">Tendance</div><div class="bd-val">${tend}</div><div class="bd-sub">${r.rating_tendance || 0}</div></div>
+                            <div class="bd-item"><div class="bd-label">Fiabilité</div><div class="bd-val">${r.rating_fiabilite}</div><div class="bd-sub">Écart-type des PR</div></div>
+                        </div>
+                    </div>`;
+                }
+
+                // Adaptation détaillée
+                if (ad.details && ad.details.length > 0) {
+                    html += `<div class="criteres-table"><h4>Adaptation à la course du jour</h4><table class="crit-table">
+                        <thead><tr><th>Critère</th><th>Valeur</th><th>Courses</th><th>PR</th><th>vs Moyen</th></tr></thead><tbody>`;
+                    ad.details.forEach(d => {
+                        const cls = d.delta < 0 ? 'positive' : (d.delta > 0 ? 'negative' : '');
+                        html += `<tr><td><strong>${d.nom}</strong></td><td>${d.valeur}</td><td>${d.courses}</td><td>${d.pr}</td><td class="${cls}">${d.delta > 0 ? '+' : ''}${d.delta}</td></tr>`;
+                    });
+                    html += `<tr class="total-row"><td colspan="3"><strong>PR Adaptation moyen</strong></td><td colspan="2"><strong>${ad.rating_adaptation}</strong></td></tr>`;
+                    html += `</tbody></table></div>`;
+                }
+
+                // Historique des courses avec PR
+                if (r.details && r.details.length > 0) {
+                    html += `<div class="history"><h4>Historique des courses (Performance Rating)</h4><table>
                         <thead>
-                            <tr><th>Date</th><th>Hippodrome</th><th>Prix</th><th>Dist.</th><th>Disc.</th><th>Terrain</th><th>Corde</th><th>Poids</th><th>Jockey</th><th>Place</th><th>Temps/km</th><th>Écart</th></tr>
+                            <tr><th>Date</th><th>Hippodrome</th><th>Dist.</th><th>Disc.</th><th>Place</th><th>Terrain</th><th>Corde</th><th>Poids</th><th>Jockey</th><th>Temps/km</th><th>PR</th></tr>
                         </thead><tbody>`;
-                    t.details.forEach(h => {
-                        const d = h.date ? new Date(h.date).toLocaleDateString('fr-FR') : 'N/A';
-                        const ecartRef = t.temps_moyen ? (h.temps_au_km - t.temps_moyen).toFixed(2) : '?';
-                        const ecartClass = parseFloat(ecartRef) < 0 ? 'positive' : 'negative';
+                    r.details.forEach(d => {
+                        const date = d.date ? new Date(d.date).toLocaleDateString('fr-FR') : 'N/A';
                         html += `<tr>
-                            <td>${d}</td>
-                            <td>${h.hippodrome || ''}</td>
-                            <td>${h.nomPrix || ''}</td>
-                            <td>${h.distance || ''}</td>
-                            <td>${h.discipline || ''}</td>
-                            <td>${h.etatTerrain || ''}</td>
-                            <td>${h.corde || ''}</td>
-                            <td>${h.poidsJockey ? (h.poidsJockey + ' kg') : ''}</td>
-                            <td>${h.nomJockey || ''}</td>
-                            <td class="place-${h.place === 1 ? '1' : (h.place && h.place <= 3 ? '3' : '')}">${h.place || '-'}</td>
-                            <td class="temps-km">${h.temps_formatted}</td>
-                            <td class="${ecartClass}">${ecartRef > 0 ? '+' : ''}${ecartRef}s</td>
+                            <td>${date}</td>
+                            <td>${d.hippodrome || ''}</td>
+                            <td>${d.distance || ''}</td>
+                            <td>${d.discipline || ''}</td>
+                            <td class="place-${d.place === 1 ? '1' : (d.place && d.place <= 3 ? '3' : '')}">${d.place || '-'}</td>
+                            <td>${d.etatTerrain || ''}</td>
+                            <td>${d.corde || ''}</td>
+                            <td>${d.poidsJockey ? (d.poidsJockey + 'kg') : ''}</td>
+                            <td>${d.nomJockey || ''}</td>
+                            <td class="temps-km">${d.temps_au_km ? formatTempsKm(d.temps_au_km) : 'N/A'}</td>
+                            <td class="pr-val">${d.pr}</td>
                         </tr>`;
                     });
                     html += `</tbody></table></div>`;
@@ -320,7 +319,7 @@
             results.classList.remove('hidden');
         }
 
-        function formatTemps(seconds) {
+        function formatTempsKm(seconds) {
             if (seconds === null || seconds === undefined) return 'N/A';
             const m = Math.floor(seconds / 60);
             const s = Math.floor(seconds % 60);
