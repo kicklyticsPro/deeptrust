@@ -35,7 +35,6 @@ def api_analyse():
     reunion = request.args.get("reunion", "R1")
     course = request.args.get("course", "1")
     try:
-        # Récupérer les métadonnées de la course
         prog = client.get_programme(date)
         reunions = client.parse_reunions(prog)
         course_info = None
@@ -53,8 +52,6 @@ def api_analyse():
         logger.info(f"Participants: {len(participants)}")
 
         perf_data = client.get_performances_detaillees(date, reunion, course)
-        logger.info(f"Perf data type: {type(perf_data)} keys: {list(perf_data.keys()) if isinstance(perf_data, dict) else 'N/A'}")
-
         if not perf_data or (isinstance(perf_data, dict) and not perf_data.get("participants") and perf_data.get("code")):
             performances = []
         else:
@@ -74,7 +71,7 @@ def api_analyse():
         logger.error(f"Error in analyse: {e}")
         import traceback
         logger.error(traceback.format_exc())
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": str(e), "traceback": traceback.format_exc()}), 500
 
 
 if __name__ == "__main__":
