@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Analyse Turf - Stats PMU</title>
+    <title>Analyse Turf - Temps de Course</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>🏇 Analyse Turf - Statistiques PMU</h1>
-            <p class="subtitle">Analyse purement statistique, sans prise en compte des cotes</p>
+            <h1>🏇 Analyse Turf - Temps de Course</h1>
+            <p class="subtitle">Classement par temps au kilomètre calculé (pas de cotes)</p>
         </header>
 
         <section class="controls">
@@ -185,31 +185,34 @@
                 return;
             }
 
+            // Meilleur temps pour l'écart
+            const bestTemps = analyses[0]?.temps?.temps_estime || 0;
+
             // --- Classement ---
             let rankingHtml = '';
-            if (analyses[0].moyenne !== undefined) {
+            if (analyses[0].temps?.temps_estime !== undefined) {
                 rankingHtml += '<div class="podium">';
                 for (let i = 0; i < Math.min(3, analyses.length); i++) {
                     const a = analyses[i];
+                    const t = a.temps || {};
+                    const ecart = t.temps_estime ? (t.temps_estime - bestTemps).toFixed(2) : '?';
                     const cls = i === 0 ? 'first' : (i === 1 ? 'second' : 'third');
-                    const criteres = a.criteres || [];
-                    const criteresTxt = criteres.slice(0, 3).map(c => `${c.nom}: ${c.pct}%`).join(' · ');
                     rankingHtml += `
                         <div class="podium-item ${cls}">
                             <div class="rank">${i+1}</div>
                             <div class="podium-name">${a.attitude.nom || 'N/A'} <span class="podium-num">N°${a.attitude.numPmu}</span></div>
-                            <div class="podium-score">${a.moyenne || 0}%</div>
-                            <div class="podium-detail">${criteresTxt}</div>
+                            <div class="podium-temps">${t.temps_estime_formatted || 'N/A'}/km</div>
+                            <div class="podium-detail">Écart: +${ecart}s/km · ${t.total_courses || 0} courses</div>
                         </div>
                     `;
                 }
                 rankingHtml += '</div>';
 
-                rankingHtml += '<div class="rank-table"><h3>Classement complet</h3><table><thead><tr><th>Rang</th><th>N°</th><th>Nom</th><th>Moyenne %</th><th>Courses</th><th>V</th><th>P123</th><th>Critères analysés</th></tr></thead><tbody>';
+                rankingHtml += '<div class="rank-table"><h3>Classement par temps estimé au km</h3><table><thead><tr><th>Rang</th><th>N°</th><th>Nom</th><th>Temps estimé/km</th><th>Écart</th><th>Global</th><th>Même dist.</th><th>Récent</th><th>Courses</th></tr></thead><tbody>';
                 analyses.forEach((a, i) => {
-                    const g = a.global || {};
-                    const nbCrit = (a.criteres || []).length;
-                    rankingHtml += `<tr><td class="rank-col">${i+1}</td><td>${a.attitude.numPmu}</td><td><strong>${a.attitude.nom}</strong></td><td class="score-total">${a.moyenne || 0}%</td><td>${g.total || 0}</td><td>${g.victoires || 0}</td><td>${g.places123 || 0}</td><td>${nbCrit}</td></tr>`;
+                    const t = a.temps || {};
+                    const ecart = t.temps_estime ? (t.temps_estime - bestTemps).toFixed(2) : '?';
+                    rankingHtml += `<tr><td class="rank-col">${i+1}</td><td>${a.attitude.numPmu}</td><td><strong>${a.attitude.nom}</strong></td><td class="temps-total">${t.temps_estime_formatted || 'N/A'}</td><td>+${ecart}s</td><td>${t.temps_formatted || 'N/A'}</td><td>${t.temps_formatted_meme_distance || 'N/A'}</td><td>${t.temps_formatted_3_dernieres || 'N/A'}</td><td>${t.total_courses}</td></tr>`;
                 });
                 rankingHtml += '</tbody></table></div>';
             }
@@ -220,22 +223,14 @@
             // --- Cartes détaillées ---
             analyses.forEach((a, idx) => {
                 const att = a.attitude;
-                const glob = a.global || {};
+                const t = a.temps || {};
                 const card = document.createElement('div');
                 card.className = 'horse-card';
 
-                let rankBadge = '';
-                if (a.moyenne !== undefined) {
-                    rankBadge = `<div class="rank-badge" title="Rang ${idx+1}">${idx+1}</div>`;
-                }
-                let scoreBar = '';
-                if (a.moyenne !== undefined) {
-                    const maxMoy = Math.max(...analyses.map(x => x.moyenne || 0));
-                    const pct = maxMoy > 0 ? Math.min(100, Math.max(0, (a.moyenne / maxMoy) * 100)) : 0;
-                    scoreBar = `<div class="score-bar-wrap"><div class="score-bar" style="width:${pct}%"></div><div class="score-bar-label">Moyenne : ${a.moyenne}%</div></div>`;
-                }
+                const ecart = t.temps_estime ? (t.temps_estime - bestTemps).toFixed(2) : '?';
 
-                let html = `${rankBadge}
+                let html = `
+                    <div class="rank-badge" title="Rang ${idx+1}">${idx+1}</div>
                     <div class="horse-header">
                         <div class="num">${att.numPmu}</div>
                         <div class="infos">
@@ -247,78 +242,90 @@
                                 <span class="tag">${att.jockey || 'N/A'}</span>
                                 <span class="tag trainer">${att.entraineur || 'N/A'}</span>
                                 <span class="tag">${att.oeilleres || ''}</span>
-                                <span class="tag">${att.robe || ''}</span>
                             </div>
                         </div>
-                        <div class="musique">
-                            <div class="label">Musique</div>
-                            <div class="value">${att.musique || 'N/A'}</div>
+                        <div class="temps-box">
+                            <div class="temps-label">Temps estimé</div>
+                            <div class="temps-value">${t.temps_estime_formatted || 'N/A'}/km</div>
+                            <div class="temps-ecart">+${ecart}s vs meilleur</div>
                         </div>
                     </div>
-                    ${scoreBar}
+                    <div class="temps-stats">
+                        <div class="temps-stat">
+                            <div class="ts-label">Global</div>
+                            <div class="ts-val">${t.temps_formatted || 'N/A'}</div>
+                            <div class="ts-sub">${t.total_courses} courses</div>
+                        </div>
+                        <div class="temps-stat">
+                            <div class="ts-label">Même distance</div>
+                            <div class="ts-val">${t.temps_formatted_meme_distance || 'N/A'}</div>
+                            <div class="ts-sub">${t.courses_meme_distance} courses</div>
+                        </div>
+                        <div class="temps-stat">
+                            <div class="ts-label">Forme récente</div>
+                            <div class="ts-val">${t.temps_formatted_3_dernieres || 'N/A'}</div>
+                            <div class="ts-sub">3 dernières</div>
+                        </div>
+                        <div class="temps-stat">
+                            <div class="ts-label">Régularité</div>
+                            <div class="ts-val">${t.ecart_type || 'N/A'}s</div>
+                            <div class="ts-sub">Écart-type</div>
+                        </div>
+                        <div class="temps-stat">
+                            <div class="ts-label">Meilleur</div>
+                            <div class="ts-val">${t.temps_min ? formatTemps(t.temps_min) : 'N/A'}</div>
+                            <div class="ts-sub">Record</div>
+                        </div>
+                        <div class="temps-stat">
+                            <div class="ts-label">Pire</div>
+                            <div class="ts-val">${t.temps_max ? formatTemps(t.temps_max) : 'N/A'}</div>
+                            <div class="ts-sub">Pire perf</div>
+                        </div>
+                    </div>
                 `;
 
-                // Tableau des critères
-                if (a.criteres && a.criteres.length > 0) {
-                    html += `<div class="criteres-table"><h4>% de réussite par critère (course du jour)</h4><table class="crit-table">
-                        <thead><tr><th>Critère</th><th>Valeur</th><th>Courses</th><th>% Réussite</th></tr></thead><tbody>`;
-                    a.criteres.forEach(c => {
-                        html += `<tr><td><strong>${c.nom}</strong></td><td>${c.valeur}</td><td>${c.total}</td><td class="pct-${c.pct >= 50 ? 'high' : (c.pct >= 25 ? 'mid' : 'low')}">${c.pct}%</td></tr>`;
-                    });
-                    html += `<tr class="total-row"><td colspan="3"><strong>MOYENNE</strong></td><td class="pct-${a.moyenne >= 50 ? 'high' : (a.moyenne >= 25 ? 'mid' : 'low')}"><strong>${a.moyenne}%</strong></td></tr>`;
-                    html += `</tbody></table></div>`;
-                } else if (glob.total === 0) {
-                    html += `<div class="no-criteres">🆕 Cheval inédit - aucune course dans l'historique</div>`;
-                } else {
-                    html += `<div class="no-criteres">Aucun critère de la course du jour trouvé dans l'historique</div>`;
-                }
-
-                // Stats globales
-                html += `<div class="stats-grid">
-                    <div class="stat-box">
-                        <div class="stat-title">Global</div>
-                        <div class="stat-body">
-                            <div><strong>Total:</strong> ${glob.total || 0}</div>
-                            <div><strong>Victoires:</strong> ${glob.victoires || 0}</div>
-                            <div><strong>Places 1-2-3:</strong> ${glob.places123 || 0}</div>
-                            <div><strong>Place moy.:</strong> ${glob.place_moy || 'N/A'}</div>
-                            <div><strong>% Réussite:</strong> ${glob.pct_reussite || 0}%</div>
-                            <div><strong>Gains:</strong> ${att.gainsCarriere ? (att.gainsCarriere/100).toLocaleString('fr-FR') + ' €' : 'N/A'}</div>
-                        </div>
-                    </div>
-                </div>`;
-
-                // Historique détaillé
-                if (a.history && a.history.length > 0) {
-                    html += `<div class="history"><h4>10 dernières courses</h4><table>
+                // Historique détaillé avec temps
+                if (t.details && t.details.length > 0) {
+                    html += `<div class="history"><h4>Historique des courses (temps au km calculé)</h4><table>
                         <thead>
-                            <tr><th>Date</th><th>Hippodrome</th><th>Prix</th><th>Disc.</th><th>Dist.</th><th>Terrain</th><th>Corde</th><th>Poids</th><th>Jockey</th><th>Place</th><th>Statut</th></tr>
+                            <tr><th>Date</th><th>Hippodrome</th><th>Prix</th><th>Dist.</th><th>Disc.</th><th>Terrain</th><th>Corde</th><th>Poids</th><th>Jockey</th><th>Place</th><th>Temps/km</th><th>Écart</th></tr>
                         </thead><tbody>`;
-                    a.history.forEach(h => {
+                    t.details.forEach(h => {
                         const d = h.date ? new Date(h.date).toLocaleDateString('fr-FR') : 'N/A';
+                        const ecartRef = t.temps_moyen ? (h.temps_au_km - t.temps_moyen).toFixed(2) : '?';
+                        const ecartClass = parseFloat(ecartRef) < 0 ? 'positive' : 'negative';
                         html += `<tr>
                             <td>${d}</td>
                             <td>${h.hippodrome || ''}</td>
                             <td>${h.nomPrix || ''}</td>
-                            <td>${h.discipline || ''}</td>
                             <td>${h.distance || ''}</td>
+                            <td>${h.discipline || ''}</td>
                             <td>${h.etatTerrain || ''}</td>
                             <td>${h.corde || ''}</td>
                             <td>${h.poidsJockey ? (h.poidsJockey + ' kg') : ''}</td>
                             <td>${h.nomJockey || ''}</td>
                             <td class="place-${h.place === 1 ? '1' : (h.place && h.place <= 3 ? '3' : '')}">${h.place || '-'}</td>
-                            <td>${h.statusArrivee || ''}</td>
+                            <td class="temps-km">${h.temps_formatted}</td>
+                            <td class="${ecartClass}">${ecartRef > 0 ? '+' : ''}${ecartRef}s</td>
                         </tr>`;
                     });
                     html += `</tbody></table></div>`;
                 }
 
-                html += `</div>`; // close horse-card
+                html += `</div>`;
                 card.innerHTML = html;
                 results.appendChild(card);
             });
 
             results.classList.remove('hidden');
+        }
+
+        function formatTemps(seconds) {
+            if (seconds === null || seconds === undefined) return 'N/A';
+            const m = Math.floor(seconds / 60);
+            const s = Math.floor(seconds % 60);
+            const c = Math.floor((seconds - Math.floor(seconds)) * 100);
+            return `${m}:${s.toString().padStart(2, '0')}.${c.toString().padStart(2, '0')}`;
         }
 
         dateInput.addEventListener('change', loadReunions);
