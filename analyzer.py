@@ -1,6 +1,7 @@
 from collections import defaultdict
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+import math
 
 
 def _safe(val):
@@ -8,6 +9,7 @@ def _safe(val):
 
 
 def _extract_historique_courses(courses: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Normalise et trie les courses historiques par date décroissante."""
     out = []
     for c in courses:
         out.append({
@@ -17,25 +19,33 @@ def _extract_historique_courses(courses: List[Dict[str, Any]]) -> List[Dict[str,
             "distance": c.get("distance"),
             "corde": c.get("corde"),
             "place": c.get("place"),
-            "nbParticipants": c.get("nbParticipants"),
+            "nbParticipants": c.get("nbParticipants") or 0,
             "poidsJockey": c.get("poidsJockey"),
             "nomJockey": c.get("nomJockey"),
             "etatTerrain": c.get("etatTerrain"),
             "statusArrivee": c.get("statusArrivee"),
             "nomPrix": c.get("nomPrix"),
+            "allocation": c.get("allocation") or 0,
         })
+    # Tri par date décroissante (timestamp plus grand = plus récent)
+    out.sort(key=lambda x: x["date"] or 0, reverse=True)
     return out
 
 
-# ---------------------------------------------------------------------------
-# Scoring helpers
-# ---------------------------------------------------------------------------
+# =============================================================================
+# PARSING MUSIQUE PMU
+# =============================================================================
 
-def _parse_musique(musique: Optional[str]) -> List[int]:
-    """Parse les 5 derniers résultats de la musique."""
+def _parse_musique(musique: Optional[str]) -> List[str]:
+    """
+    Parse la musique PMU en liste de symboles.
+    Ex: '1p3p(25)4p6p4p' -> ['1', 'p', '3', 'p', '4', 'p', '6', 'p', '4']
+    (25) est la corde, on ignore le contenu des parenthèses.
+    a=arrêté, t=tombé, d=dérouté, r=retiré
+    """
     if not musique:
         return []
-    cleaned = []
+    symbols = []
     skip = False
     for ch in musique:
         if ch == '(':
@@ -46,126 +56,318 @@ def _parse_musique(musique: Optional[str]) -> List[int]:
             continue
         if skip:
             continue
-        cleaned.append(ch)
-    results = []
-    for ch in cleaned[-5:]:
-        if ch.isdigit():
-            results.append(int(ch))
-        elif ch == 'p':
-            results.append(4)
-        elif ch in ('a', 't', 'd', 'r'):
-            results.append(99)
+        if ch.isdigit() or ch in 'patdr':
+            symbols.append(ch)
+    return symbols
+
+
+def _musique_last_n(symbols: List[str], n: int = 5) -> List[str]:
+    """Récupère les n derniers symboles significatifs."""
+    return symbols[-n:] if len(symbols) >= n else symbols
+
+
+# =============================================================================
+# SCORING
+# =============================================================================
+
+def _score_place_recent(place: Optional[int], nb_part: int = 0) -> float:
+    """
+    Score d'une place en course (0-10 base).
+    1er=10, 2ème=8, 3ème=6, 4ème=4, 5ème=2, 6ème=1, 7ème+=0
+    Si >10 partants et place > 7 mais <= nb_part//2 : 0.5
+    """
+    if place is None:
+        return 0.0
+    if place == 1:
+        return 10.0
+    if place == 2:
+        return 8.0
+    if place == 3:
+        return 6.0
+    if place == 4:
+        return 4.0
+    if place == 5:
+        return 2.0
+    if place == 6:
+        return 1.0
+    if nb_part > 10 and place <= nb_part // 2:
+        return 0.5
+    return 0.0
+
+
+def _score_forme_recente(history: List[Dict[str, Any]]) -> float:
+    """
+    Forme récente sur les 5 dernières courses, pondérées dégressivement.
+    Course -1: x2.0, -2: x1.5, -3: x1.2, -4: x1.0, -5: x0.8
+    """
+    if not history:
+        return 0.0
+    weights = [2.0, 1.5, 1.2, 1.0, 0.8]
+    total = 0.0
+    max_total = 0.0
+    for i, c in enumerate(history[:5]):
+        w = weights[i] if i < len(weights) else 0.5
+        base = _score_place_recent(c.get("place"), c.get("nbParticipants") or 0)
+        # Si incident (place=None mais status non-PLACE), base reste 0
+        total += base * w
+        max_total += 10.0 * w
+    if max_total == 0:
+        return 0.0
+    # Normaliser sur 25 pts max
+    return (total / max_total) * 25.0
+
+
+def _score_musique(symbols: List[str]) -> float:
+    """
+    Score basé sur la musique (15 pts max).
+    5 derniers symboles pondérés dégressivement.
+    """
+    last = _musique_last_n(symbols, 5)
+    if not last:
+        return 0.0
+    weights = [2.0, 1.6, 1.3, 1.1, 1.0]  # du plus récent au plus ancien
+    total = 0.0
+    max_total = 0.0
+    for i, sym in enumerate(last):
+        w = weights[i] if i < len(weights) else 0.8
+        if sym.isdigit():
+            p = int(sym)
+            if p == 1:
+                pts = 10
+            elif p == 2:
+                pts = 7
+            elif p == 3:
+                pts = 5
+            elif p == 4:
+                pts = 3
+            elif p == 5:
+                pts = 1
+            else:
+                pts = 0
+        elif sym == 'p':
+            pts = 3  # placé sans rang précis
         else:
-            results.append(50)
-    return results
-
-
-def _score_musique(musique: Optional[str], max_pts: float = 15.0) -> float:
-    results = _parse_musique(musique)
-    if not results:
+            pts = -3  # incident (a, t, d, r)
+        total += pts * w
+        max_total += 10 * w
+    if max_total <= 0:
         return 0.0
-    pts = 0
-    for r in results:
-        if r == 1:
-            pts += 5
-        elif r == 2:
-            pts += 4
-        elif r == 3:
-            pts += 3
-        elif r == 4:
-            pts += 1
-        elif r == 5:
-            pts += 0.5
-        elif r >= 90:
-            pts -= 2
-    max_possible = len(results) * 5
-    return max(0.0, (pts / max_possible) * max_pts) if max_possible > 0 else 0.0
+    raw = (total / max_total) * 15.0
+    return max(0.0, min(15.0, raw))
 
 
-def _score_global(glob: Dict[str, Any]) -> float:
-    score = 0.0
-    total = glob.get('totalCourses', 0)
-    if total == 0:
-        return 0.0
-    score += (glob.get('pctVictoire', 0) / 100) * 10
-    score += (glob.get('pctPlace', 0) / 100) * 10
-    pm = glob.get('placeMoyenne')
-    if pm is not None:
-        if pm <= 2.0:
-            score += 2
-        elif pm <= 3.0:
-            score += 1
-        elif pm >= 6.0:
-            score -= 2
-        elif pm >= 5.0:
-            score -= 1
-    return max(0.0, min(20.0, score))
+def _score_experience_regul(history: List[Dict[str, Any]]) -> Dict[str, float]:
+    """
+    Expérience + régularité (20 pts max).
+    - Nombre de courses: 0-10 pts (courbe de saturation)
+    - Régularité (écart-type des places): 0-10 pts
+    """
+    n = len(history)
+    if n == 0:
+        return {"experience": 0.0, "regularite": 0.0, "total": 0.0}
+
+    # Expérience: 1 course=2pts, 3=5pts, 5=7pts, 8=9pts, 10+=10pts
+    if n >= 15:
+        exp = 10.0
+    elif n >= 10:
+        exp = 9.0
+    elif n >= 8:
+        exp = 8.0
+    elif n >= 5:
+        exp = 7.0
+    elif n >= 3:
+        exp = 5.0
+    elif n >= 2:
+        exp = 3.0
+    else:
+        exp = 2.0
+
+    # Régularité: écart-type des places valides (1er = meilleur = faible écart)
+    places = [c["place"] for c in history if c["place"] is not None]
+    if len(places) >= 2:
+        moy = sum(places) / len(places)
+        variance = sum((p - moy) ** 2 for p in places) / len(places)
+        ecart = math.sqrt(variance)
+        # Écart-type < 1.5 = très régulier (10 pts), > 5 = irrégulier (0 pts)
+        if ecart <= 1.5:
+            reg = 10.0
+        elif ecart >= 5.0:
+            reg = 0.0
+        else:
+            reg = 10.0 - ((ecart - 1.5) / (5.0 - 1.5)) * 10.0
+    else:
+        reg = 2.0  # pas assez de données
+
+    return {"experience": round(exp, 1), "regularite": round(reg, 1), "total": round(exp + reg, 1)}
 
 
-def _score_recente(glob: Dict[str, Any]) -> float:
-    v = glob.get('victoiresLast5', 0)
-    p = glob.get('placesLast5', 0)
-    score = v * 4 + (p - v) * 2
-    return max(0.0, min(20.0, score))
-
-
-def _score_criterion(stats_dict: Dict[str, Any], current_value, max_pts: float = 8.0) -> float:
+def _score_criterion_adaptation(
+    stats_dict: Dict[str, Any],
+    current_value,
+    min_races_for_significance: int = 2
+) -> float:
+    """
+    Score d'adaptation à un critère (0-6 pts).
+    - Si 0 course sur ce critère: 1 pt (neutre, pas de référence)
+    - Si >= min_races et place moyenne <= 3.0: 6 pts
+    - Si place moyenne <= 4.0: 4 pts
+    - Si place moyenne <= 5.0: 2 pts
+    - Sinon: 0-1 pt
+    Bonus si % victoire > 20% ou % place > 50%
+    """
     if current_value is None or not stats_dict:
-        return 0.0
+        return 1.0
     key = str(current_value)
     if key not in stats_dict:
-        return 0.0
+        return 1.0  # pas d'expérience = neutre
     s = stats_dict[key]
-    total = s.get('total', 0)
+    total = s.get("total", 0)
     if total == 0:
-        return 0.0
+        return 1.0
+
+    pm = s.get("placeMoyenne")
+    pv = s.get("pctVictoire", 0)
+    pp = s.get("pctPlace", 0)
+
     score = 0.0
-    pm = s.get('placeMoyenne')
-    if pm is not None:
-        if pm <= 2.0:
-            score = max_pts
-        elif pm <= 3.0:
-            score = max_pts * 0.75
-        elif pm <= 4.0:
-            score = max_pts * 0.5
-        elif pm <= 5.0:
-            score = max_pts * 0.25
+    if total >= min_races_for_significance:
+        if pm is not None:
+            if pm <= 2.0:
+                score = 6.0
+            elif pm <= 3.0:
+                score = 5.0
+            elif pm <= 4.0:
+                score = 4.0
+            elif pm <= 5.0:
+                score = 2.5
+            elif pm <= 6.0:
+                score = 1.5
+            else:
+                score = 0.5
         else:
-            score = max_pts * 0.1
-    pv = s.get('pctVictoire', 0)
+            score = 1.0
+    else:
+        # Trop peu de courses, on atténue
+        if pm is not None:
+            if pm <= 3.0:
+                score = 3.0
+            elif pm <= 5.0:
+                score = 1.5
+            else:
+                score = 0.5
+        else:
+            score = 1.0
+
+    # Bonus victoire/place
     if pv >= 30:
-        score += 1
-    if pv >= 50:
-        score += 1
-    pp = s.get('pctPlace', 0)
-    if pp >= 50:
-        score += 1
-    return min(max_pts + 2, score)
+        score += 1.0
+    if pp >= 60:
+        score += 0.5
+
+    return min(6.0, score)
+
+
+def _score_bonus_malus(analysis: Dict[str, Any], history: List[Dict[str, Any]]) -> Dict[str, float]:
+    """Bonus et malus divers (de -10 à +10)."""
+    att = analysis.get("attitude", {})
+    glob = analysis.get("global", {})
+    bonus = 0.0
+    details = {}
+
+    # Inédit (jamais couru)
+    total = glob.get("totalCourses", 0)
+    if total == 0:
+        bonus -= 5.0
+        details["inedit"] = -5.0
+    else:
+        details["inedit"] = 0.0
+
+    # Changement de jockey
+    if att.get("jockey_change") is True:
+        bonus -= 2.0
+        details["jockey_change"] = -2.0
+    else:
+        details["jockey_change"] = 0.0
+
+    # Gains année en cours (indicateur de forme/montée en puissance)
+    gains = att.get("gainsAnneeEnCours", 0) or 0
+    if gains > 500000:
+        bonus += 2.0
+        details["gains"] = 2.0
+    elif gains > 200000:
+        bonus += 1.0
+        details["gains"] = 1.0
+    else:
+        details["gains"] = 0.0
+
+    # Place moyenne globale excellente ou mauvaise
+    pm = glob.get("placeMoyenne")
+    if pm is not None:
+        if pm <= 2.5:
+            bonus += 3.0
+            details["place_moyenne"] = 3.0
+        elif pm <= 3.5:
+            bonus += 1.5
+            details["place_moyenne"] = 1.5
+        elif pm >= 7.0:
+            bonus -= 3.0
+            details["place_moyenne"] = -3.0
+        elif pm >= 6.0:
+            bonus -= 1.5
+            details["place_moyenne"] = -1.5
+        else:
+            details["place_moyenne"] = 0.0
+    else:
+        details["place_moyenne"] = 0.0
+
+    # Dernière course = victoire (si historique disponible)
+    if history and history[0].get("place") == 1:
+        bonus += 2.0
+        details["derniere_victoire"] = 2.0
+    else:
+        details["derniere_victoire"] = 0.0
+
+    # Musique commence par '1' (victoire la plus récente)
+    musique = att.get("musique", "")
+    symbols = _parse_musique(musique)
+    if symbols and symbols[-1] == '1':
+        bonus += 1.5
+        details["musique_recente_1"] = 1.5
+    else:
+        details["musique_recente_1"] = 0.0
+
+    return {"bonus": round(bonus, 1), "details": details}
 
 
 def compute_score(analysis: Dict[str, Any], course_context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Calcule un score composite 0-100+ pour chaque cheval.
     """
-    glob = analysis.get('global', {}) if analysis else {}
-    att = analysis.get('attitude', {}) if analysis else {}
+    if not analysis:
+        return {"total": 0}
+
+    att = analysis.get("attitude", {})
+    glob = analysis.get("global", {})
+    history = analysis.get("history", [])
     scores = {}
-    if not course_context:
-        scores['total'] = 0
-        return scores
 
-    # 1. Forme globale (20 pts max)
-    scores['global'] = round(_score_global(glob), 1)
+    # 1. EXPÉRIENCE & RÉGULARITÉ (20 pts)
+    exp_reg = _score_experience_regul(history)
+    scores["experience"] = exp_reg["experience"]
+    scores["regularite"] = exp_reg["regularite"]
+    scores["experience_total"] = exp_reg["total"]
 
-    # 2. Forme récente (20 pts max)
-    scores['recente'] = round(_score_recente(glob), 1)
+    # 2. FORME RÉCENTE (25 pts)
+    scores["recente"] = round(_score_forme_recente(history), 1)
 
-    # 3. Musique (15 pts max)
-    scores['musique'] = round(_score_musique(att.get('musique', '')), 1)
+    # 3. MUSIQUE (15 pts)
+    musique = att.get("musique", "")
+    symbols = _parse_musique(musique)
+    scores["musique"] = round(_score_musique(symbols), 1)
 
-    # 4. Adéquation course du jour (40 pts max)
-    corde = att.get('corde')
-    distance = course_context.get('distance')
+    # 4. ADÉQUATION COURSE DU JOUR (30 pts max)
+    corde = att.get("corde")
+    distance = course_context.get("distance") if course_context else None
     distance_rounded = None
     if distance is not None:
         try:
@@ -173,27 +375,36 @@ def compute_score(analysis: Dict[str, Any], course_context: Optional[Dict[str, A
         except Exception:
             distance_rounded = str(distance)
 
-    discipline = course_context.get('discipline')
-    hippodrome = (course_context.get('hippodrome') or {}).get('libelleCourt')
-    jockey = att.get('jockey')
+    discipline = course_context.get("discipline") if course_context else None
+    hippodrome = (course_context.get("hippodrome") or {}).get("libelleCourt") if course_context else None
+    jockey = att.get("jockey")
 
-    scores['corde'] = round(_score_criterion(analysis.get('byCorde', {}), corde, 8), 1)
-    scores['distance'] = round(_score_criterion(analysis.get('byDistance', {}), distance_rounded, 8), 1)
-    scores['discipline'] = round(_score_criterion(analysis.get('byDiscipline', {}), discipline, 8), 1)
-    scores['hippodrome'] = round(_score_criterion(analysis.get('byHippodrome', {}), hippodrome, 8), 1)
-    scores['jockey'] = round(_score_criterion(analysis.get('byJockey', {}), jockey, 8), 1)
+    scores["corde"] = round(_score_criterion_adaptation(analysis.get("byCorde", {}), corde), 1)
+    scores["distance"] = round(_score_criterion_adaptation(analysis.get("byDistance", {}), distance_rounded), 1)
+    scores["discipline"] = round(_score_criterion_adaptation(analysis.get("byDiscipline", {}), discipline), 1)
+    scores["hippodrome"] = round(_score_criterion_adaptation(analysis.get("byHippodrome", {}), hippodrome), 1)
+    scores["jockey"] = round(_score_criterion_adaptation(analysis.get("byJockey", {}), jockey), 1)
+    scores["adaptation"] = round(scores["corde"] + scores["distance"] + scores["discipline"] + scores["hippodrome"] + scores["jockey"], 1)
 
-    # 5. Présence entraîneur (2 pts)
-    scores['entraineur'] = round(2.0 if att.get('entraineur') else 0.0, 1)
+    # 5. BONUS/MALUS (10 pts max, peut être négatif)
+    bm = _score_bonus_malus(analysis, history)
+    scores["bonus_malus"] = bm["bonus"]
+    scores["bonus_details"] = bm["details"]
 
-    total = sum(scores.values())
-    scores['total'] = round(total, 1)
+    total = (
+        scores["experience_total"] +
+        scores["recente"] +
+        scores["musique"] +
+        scores["adaptation"] +
+        scores["bonus_malus"]
+    )
+    scores["total"] = round(total, 1)
     return scores
 
 
-# ---------------------------------------------------------------------------
-# Analyzer
-# ---------------------------------------------------------------------------
+# =============================================================================
+# Analyzer class
+# =============================================================================
 
 class HorseAnalyzer:
     def __init__(self, horse_info: Dict[str, Any], courses_history: List[Dict[str, Any]]):
@@ -327,7 +538,12 @@ def build_analyses(
     performances: List[Dict[str, Any]],
     course_context: Optional[Dict[str, Any]] = None
 ) -> List[Dict[str, Any]]:
-    perf_by_num = {p["numPmu"]: p.get("courses", []) for p in performances}
+    perf_by_num = {}
+    for p in performances or []:
+        num = p.get("numPmu")
+        if num is not None:
+            perf_by_num[num] = p.get("courses", [])
+
     analyses = []
     for horse in participants:
         num = horse.get("numPmu")
