@@ -147,6 +147,19 @@ input, select {
 
 .no-data { color: var(--muted); padding: 20px; text-align: center; }
 
+/* Tableau des critères de réussite */
+.criteres-table { margin: 14px 0; }
+.criteres-table h4 { color: var(--accent); font-size: 1rem; margin-bottom: 10px; }
+.crit-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+.crit-table th { background: #111827; color: var(--muted); padding: 10px 8px; text-align: left; border-bottom: 1px solid #334155; }
+.crit-table td { padding: 8px; border-bottom: 1px solid #1e293b; color: var(--text); }
+.crit-table .pct-high { color: #22c55e; font-weight: 700; }
+.crit-table .pct-mid { color: #f59e0b; font-weight: 600; }
+.crit-table .pct-low { color: #ef4444; font-weight: 600; }
+.crit-table .total-row { background: #0f172a; }
+.crit-table .total-row td { border-top: 2px solid #334155; font-size: 1.05rem; }
+.no-criteres { background: #1a1a2e; color: var(--accent); padding: 12px 16px; border-radius: 8px; border-left: 3px solid var(--accent); margin: 12px 0; font-size: 0.95rem; }
+
 /* Score Breakdown */
 .score-breakdown { margin: 12px 0 16px; }
 .score-breakdown h4 { color: var(--accent); font-size: 0.95rem; margin-bottom: 8px; }
