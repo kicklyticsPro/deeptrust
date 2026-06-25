@@ -169,6 +169,17 @@ input, select {
 .confiance-bar.mid .conf-fill { background: #f59e0b; }
 .confiance-bar.low .conf-fill { background: #ef4444; }
 
+/* Bonus/Malus */
+.bonus-malus { margin: 12px 0; }
+.bonus-malus h4 { color: var(--accent); font-size: 0.95rem; margin-bottom: 8px; }
+.bonus-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 6px; }
+.bonus-item { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; background: #0b1220; border-radius: 6px; border: 1px solid #1e293b; font-size: 0.85rem; }
+.bonus-item.positive { border-color: #22c55e; color: #22c55e; }
+.bonus-item.negative { border-color: #ef4444; color: #ef4444; }
+.bonus-item.total { background: #111827; border-color: #334155; font-weight: 700; }
+.bonus-name { color: var(--muted); }
+.bonus-val { font-weight: 700; }
+
 /* SF value */
 .sf-val { color: #c084fc; font-weight: 700; font-family: monospace; }
 
