@@ -47,7 +47,11 @@ def api_analyse():
         participants = client.parse_participants(part_data)
 
         perf_data = client.get_performances_detaillees(date, reunion, course)
-        performances = client.parse_performances(perf_data)
+        # Si l'API performances retourne une erreur, ignorer l'historique
+        if perf_data and not perf_data.get("participants") and perf_data.get("code"):
+            performances = []
+        else:
+            performances = client.parse_performances(perf_data)
 
         analyses = build_analyses(participants, performances, course_info)
         return jsonify({
