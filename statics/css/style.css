@@ -158,6 +158,8 @@ input, select {
 .crit-table .pct-low { color: #ef4444; font-weight: 600; }
 .crit-table .total-row { background: #0f172a; }
 .crit-table .total-row td { border-top: 2px solid #334155; font-size: 1.05rem; }
+.crit-table .rank-1 { color: #22c55e; font-weight: 700; font-size: 1.1rem; }
+.crit-table .rank-3 { color: #f59e0b; font-weight: 600; }
 .no-criteres { background: #1a1a2e; color: var(--accent); padding: 12px 16px; border-radius: 8px; border-left: 3px solid var(--accent); margin: 12px 0; font-size: 0.95rem; }
 
 /* Indice de confiance */
