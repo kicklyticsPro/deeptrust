@@ -67,6 +67,56 @@ def round_distance(d) -> Optional[int]:
         return None
 
 
+def clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+
+def bayesian_adaptation_score(
+    victories: int,
+    places: int,
+    total: int,
+    *,
+    prior_mean: float,
+    prior_strength: float,
+    victory_weight: float,
+    place_weight: float,
+    exponent: float = 1.2,
+) -> float:
+    """
+    Score d'adaptation 0-100 avec shrinkage bayésien.
+
+    Idée:
+    - le score brut est une moyenne pondérée des résultats (victoire > place), normalisée sur 100
+    - on lisse ensuite vers une moyenne a priori (prior_mean) tant que l'échantillon est petit
+    - un exposant > 1 augmente la discrimination sur les bons/mauvais profils
+
+    Exemple: 1 victoire sur 1 course ne vaut plus 100, mais un score proche du prior,
+    relevé progressivement quand le volume d'observations augmente.
+    """
+    if total <= 0:
+        return 0.0
+
+    # places contient déjà les victoires ; on les retire pour isoler les places simples.
+    only_places = max(0, places - victories)
+    max_event_weight = victory_weight
+
+    observed_rate = (
+        victories * victory_weight + only_places * place_weight
+    ) / (total * max_event_weight)
+
+    shrunk_rate = (observed_rate * total + prior_mean * prior_strength) / (total + prior_strength)
+    discriminant_rate = shrunk_rate ** exponent
+    return clamp(discriminant_rate * 100, 0.0, 100.0)
+
+
+def bayesian_reliability(total: int, scale: float = 18.0) -> int:
+    """Fiabilité croissante mais saturante avec la taille d'échantillon."""
+    if total <= 0:
+        return 0
+    fiab = 100 * (1 - math.exp(-total / scale))
+    return int(round(clamp(fiab, 0, 100)))
+
+
 # =============================================================================
 # MÉTHODE DU CLASSEMENT PAR CONSENSUS (Borda Count Turfistique)
 # =============================================================================
@@ -104,8 +154,17 @@ def compute_indicators_for_all(courses_list: List[List[Dict[str, Any]]],
             total = len(courses_dist)
             victories = sum(1 for c in courses_dist if c.get("place") == 1)
             places = sum(1 for c in courses_dist if c.get("place") in (1, 2, 3))
-            score_dist = (victories * 3 + places * 1.5) / total * 100 / 4.5
-            fiab_dist = min(100, total * 20)
+            score_dist = bayesian_adaptation_score(
+                victories,
+                places,
+                total,
+                prior_mean=0.28,
+                prior_strength=6.0,
+                victory_weight=3.0,
+                place_weight=1.2,
+                exponent=1.35,
+            )
+            fiab_dist = bayesian_reliability(total, scale=10.0)
         else:
             score_dist = -10
             fiab_dist = 0
@@ -119,8 +178,17 @@ def compute_indicators_for_all(courses_list: List[List[Dict[str, Any]]],
             total = len(courses_disc)
             victories = sum(1 for c in courses_disc if c.get("place") == 1)
             places = sum(1 for c in courses_disc if c.get("place") in (1, 2, 3))
-            score_disc = (victories * 2 + places * 1) / total * 100 / 3
-            fiab_disc = min(100, total * 20)
+            score_disc = bayesian_adaptation_score(
+                victories,
+                places,
+                total,
+                prior_mean=0.30,
+                prior_strength=7.0,
+                victory_weight=2.8,
+                place_weight=1.0,
+                exponent=1.30,
+            )
+            fiab_disc = bayesian_reliability(total, scale=12.0)
         else:
             score_disc = -5
             fiab_disc = 0
@@ -134,8 +202,17 @@ def compute_indicators_for_all(courses_list: List[List[Dict[str, Any]]],
             total = len(courses_corde)
             victories = sum(1 for c in courses_corde if c.get("place") == 1)
             places = sum(1 for c in courses_corde if c.get("place") in (1, 2, 3))
-            score_corde = (victories * 2 + places * 1) / total * 100 / 3
-            fiab_corde = min(100, total * 20)
+            score_corde = bayesian_adaptation_score(
+                victories,
+                places,
+                total,
+                prior_mean=0.29,
+                prior_strength=8.0,
+                victory_weight=2.5,
+                place_weight=0.9,
+                exponent=1.30,
+            )
+            fiab_corde = bayesian_reliability(total, scale=12.0)
         else:
             score_corde = -5
             fiab_corde = 0
@@ -149,8 +226,17 @@ def compute_indicators_for_all(courses_list: List[List[Dict[str, Any]]],
             total = len(courses_jock)
             victories = sum(1 for c in courses_jock if c.get("place") == 1)
             places = sum(1 for c in courses_jock if c.get("place") in (1, 2, 3))
-            score_jock = (victories * 2 + places * 1) / total * 100 / 3
-            fiab_jock = min(100, total * 20)
+            score_jock = bayesian_adaptation_score(
+                victories,
+                places,
+                total,
+                prior_mean=0.31,
+                prior_strength=9.0,
+                victory_weight=2.3,
+                place_weight=0.9,
+                exponent=1.25,
+            )
+            fiab_jock = bayesian_reliability(total, scale=14.0)
         else:
             score_jock = -5
             fiab_jock = 0
@@ -164,8 +250,17 @@ def compute_indicators_for_all(courses_list: List[List[Dict[str, Any]]],
             total = len(courses_hippo)
             victories = sum(1 for c in courses_hippo if c.get("place") == 1)
             places = sum(1 for c in courses_hippo if c.get("place") in (1, 2, 3))
-            score_hippo = (victories * 2 + places * 1) / total * 100 / 3
-            fiab_hippo = min(100, total * 20)
+            score_hippo = bayesian_adaptation_score(
+                victories,
+                places,
+                total,
+                prior_mean=0.27,
+                prior_strength=9.0,
+                victory_weight=2.4,
+                place_weight=0.9,
+                exponent=1.32,
+            )
+            fiab_hippo = bayesian_reliability(total, scale=14.0)
         else:
             score_hippo = -5
             fiab_hippo = 0
@@ -176,13 +271,23 @@ def compute_indicators_for_all(courses_list: List[List[Dict[str, Any]]],
             total = len(recent)
             victories = sum(1 for c in recent if c.get("place") == 1)
             places = sum(1 for c in recent if c.get("place") in (1, 2, 3))
-            score_recent = (victories * 3 + places * 1.5) / total * 100 / 4.5
+            score_recent = bayesian_adaptation_score(
+                victories,
+                places,
+                total,
+                prior_mean=0.34,
+                prior_strength=2.5,
+                victory_weight=3.0,
+                place_weight=1.3,
+                exponent=1.18,
+            )
             # Bonus si dernière victoire
             if recent[0].get("place") == 1:
-                score_recent += 10
+                score_recent += 8
             elif recent[0].get("place") in (2, 3):
-                score_recent += 5
-            fiab_recent = min(100, total * 33)
+                score_recent += 4
+            score_recent = clamp(score_recent, 0.0, 100.0)
+            fiab_recent = bayesian_reliability(total, scale=3.0)
         else:
             score_recent = -15
             fiab_recent = 0
