@@ -1,381 +1,454 @@
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import math
 from collections import defaultdict
 from datetime import datetime
-
-
-def parse_musique(musique: Optional[str]) -> List[str]:
-    if not musique:
-        return []
-    symbols = []
-    skip = False
-    for ch in musique:
-        if ch == '(':
-            skip = True
-            continue
-        if ch == ')':
-            skip = False
-            continue
-        if skip:
-            continue
-        if ch.isdigit() or ch in 'patdr':
-            symbols.append(ch)
-    return symbols
-
-
-def score_musique(symbols: List[str]) -> float:
-    """Score de la musique : 0-100. Plus haut = meilleure forme."""
-    if not symbols:
-        return 0.0
-    last5 = symbols[-5:][::-1]
-    weights = [3.0, 2.5, 2.0, 1.5, 1.0]
-    total = 0
-    max_total = 0
-    for i, sym in enumerate(last5):
-        w = weights[i] if i < len(weights) else 0.8
-        if sym.isdigit():
-            p = int(sym)
-            if p == 1:
-                pts = 20
-            elif p == 2:
-                pts = 16
-            elif p == 3:
-                pts = 12
-            elif p == 4:
-                pts = 8
-            elif p == 5:
-                pts = 4
-            else:
-                pts = 1
-        elif sym == 'p':
-            pts = 6
-        else:
-            pts = 0
-        total += pts * w
-        max_total += 20 * w
-    if max_total == 0:
-        return 0.0
-    return (total / max_total) * 100
-
-
-def round_distance(d) -> Optional[int]:
-    if d is None:
-        return None
-    try:
-        return int(round(int(d) / 50) * 50)
-    except Exception:
-        return None
 
 
 def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
 
-def bayesian_adaptation_score(
-    victories: int,
-    places: int,
-    total: int,
-    *,
-    prior_mean: float,
-    prior_strength: float,
-    victory_weight: float,
-    place_weight: float,
-    exponent: float = 1.2,
-) -> float:
-    """
-    Score d'adaptation 0-100 avec shrinkage bayésien.
+def safe_str(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
 
-    Idée:
-    - le score brut est une moyenne pondérée des résultats (victoire > place), normalisée sur 100
-    - on lisse ensuite vers une moyenne a priori (prior_mean) tant que l'échantillon est petit
-    - un exposant > 1 augmente la discrimination sur les bons/mauvais profils
 
-    Exemple: 1 victoire sur 1 course ne vaut plus 100, mais un score proche du prior,
-    relevé progressivement quand le volume d'observations augmente.
-    """
+def parse_date(date_value: Any) -> Optional[datetime]:
+    if not date_value:
+        return None
+    if isinstance(date_value, datetime):
+        return date_value
+    text = str(date_value).strip()
+    for fmt in (
+        "%Y-%m-%d",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S.%f",
+        "%Y-%m-%dT%H:%M:%S%z",
+        "%Y-%m-%dT%H:%M:%S.%f%z",
+    ):
+        try:
+            return datetime.strptime(text, fmt)
+        except Exception:
+            pass
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def normalize_name(value: Any) -> str:
+    return " ".join(safe_str(value).upper().split())
+
+
+def bounded_score_from_ratio(ratio: float, center: float = 0.5, slope: float = 5.0) -> float:
+    """Transforme un ratio en score 0-100 avec discrimination renforcée."""
+    ratio = clamp(ratio, 0.0, 1.0)
+    x = 1.0 / (1.0 + math.exp(-slope * (ratio - center)))
+    return clamp(x * 100.0, 0.0, 100.0)
+
+
+def bayesian_rate(successes: float, total: float, prior_mean: float = 0.12, prior_strength: float = 12.0) -> float:
     if total <= 0:
+        return prior_mean
+    return (successes + prior_mean * prior_strength) / (total + prior_strength)
+
+
+def weighted_place_score(place: Optional[int], field_size: Optional[int]) -> float:
+    """0..1, favorise fortement les bonnes places en tenant compte du peloton."""
+    if place is None or place <= 0:
         return 0.0
-
-    # places contient déjà les victoires ; on les retire pour isoler les places simples.
-    only_places = max(0, places - victories)
-    max_event_weight = victory_weight
-
-    observed_rate = (
-        victories * victory_weight + only_places * place_weight
-    ) / (total * max_event_weight)
-
-    shrunk_rate = (observed_rate * total + prior_mean * prior_strength) / (total + prior_strength)
-    discriminant_rate = shrunk_rate ** exponent
-    return clamp(discriminant_rate * 100, 0.0, 100.0)
+    if place == 1:
+        return 1.0
+    if place == 2:
+        return 0.72
+    if place == 3:
+        return 0.56
+    if field_size and field_size > 3:
+        normalized = 1.0 - ((place - 1) / max(1, field_size - 1))
+        return clamp(normalized * 0.45, 0.0, 0.45)
+    return 0.15
 
 
-def bayesian_reliability(total: int, scale: float = 18.0) -> int:
-    """Fiabilité croissante mais saturante avec la taille d'échantillon."""
-    if total <= 0:
-        return 0
-    fiab = 100 * (1 - math.exp(-total / scale))
-    return int(round(clamp(fiab, 0, 100)))
+def build_course_map(performances: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    by_course = defaultdict(list)
+    for perf in performances or []:
+        num = perf.get("numPmu")
+        horse_name = perf.get("nomCheval")
+        for c in perf.get("courses", []):
+            key = "|".join([
+                safe_str(c.get("date")),
+                safe_str(c.get("hippodrome")),
+                safe_str(c.get("nomPrix")),
+                safe_str(c.get("distance")),
+            ])
+            by_course[key].append({
+                "numPmu": num,
+                "nomCheval": horse_name,
+                "place": c.get("place"),
+                "nbParticipants": c.get("nbParticipants"),
+                "date": c.get("date"),
+            })
+    return by_course
 
 
-# =============================================================================
-# MÉTHODE DU CLASSEMENT PAR CONSENSUS (Borda Count Turfistique)
-# =============================================================================
-
-def compute_indicators_for_all(courses_list: List[List[Dict[str, Any]]],
-                                  participants: List[Dict[str, Any]],
-                                  course_context: Dict[str, Any]) -> Dict[int, Dict[str, Any]]:
+def compute_duel_scores(participants: List[Dict[str, Any]], performances: List[Dict[str, Any]]) -> Dict[int, Dict[str, Any]]:
     """
-    Calcule pour chaque cheval (par numPmu) un dict d'indicateurs numériques.
+    Qui domine les derniers affrontements directs entre chevaux engagés.
+    On compare les chevaux lorsqu'ils ont couru dans la même course passée.
+    Les duels récents pèsent plus lourd.
     """
-    indicators = {}
-    for i, (horse, courses) in enumerate(zip(participants, courses_list)):
-        num = horse.get("numPmu", i)
-        att = {
-            "corde": horse.get("placeCorde"),
-            "jockey": horse.get("driver"),
-            "poids": horse.get("handicapPoids"),
-            "gains": (horse.get("gainsParticipant") or {}).get("gainsCarriere", 0),
-            "musique": score_musique(parse_musique(horse.get("musique", ""))),
-            "age": horse.get("age"),
+    nums = {p.get("numPmu") for p in participants}
+    duel_points = defaultdict(float)
+    duel_events = defaultdict(float)
+    duel_wins = defaultdict(float)
+    duel_losses = defaultdict(float)
+    by_course = build_course_map(performances)
+
+    now = datetime.now()
+    for runners in by_course.values():
+        involved = [r for r in runners if r.get("numPmu") in nums and isinstance(r.get("place"), int) and r.get("place") > 0]
+        if len(involved) < 2:
+            continue
+        course_date = parse_date(involved[0].get("date"))
+        if course_date:
+            age_days = max(0, (now - course_date.replace(tzinfo=None) if course_date.tzinfo else now - course_date).days)
+        else:
+            age_days = 365
+        recency = math.exp(-age_days / 240.0)
+
+        for i in range(len(involved)):
+            for j in range(i + 1, len(involved)):
+                a = involved[i]
+                b = involved[j]
+                if a["place"] == b["place"]:
+                    duel_points[a["numPmu"]] += 0.5 * recency
+                    duel_points[b["numPmu"]] += 0.5 * recency
+                elif a["place"] < b["place"]:
+                    duel_points[a["numPmu"]] += 1.0 * recency
+                    duel_wins[a["numPmu"]] += 1.0 * recency
+                    duel_losses[b["numPmu"]] += 1.0 * recency
+                else:
+                    duel_points[b["numPmu"]] += 1.0 * recency
+                    duel_wins[b["numPmu"]] += 1.0 * recency
+                    duel_losses[a["numPmu"]] += 1.0 * recency
+                duel_events[a["numPmu"]] += recency
+                duel_events[b["numPmu"]] += recency
+
+    result = {}
+    for p in participants:
+        num = p.get("numPmu")
+        events = duel_events[num]
+        raw_rate = bayesian_rate(duel_points[num], events, prior_mean=0.50, prior_strength=4.0)
+        score = bounded_score_from_ratio(raw_rate, center=0.5, slope=7.0)
+        result[num] = {
+            "score": score,
+            "fiabilite": int(round(clamp(events * 22, 0, 100))),
+            "total": int(round(events)),
+            "meta": {
+                "duel_wins": round(duel_wins[num], 2),
+                "duel_losses": round(duel_losses[num], 2),
+                "duel_rate": round(raw_rate, 3),
+            },
+        }
+    return result
+
+
+def compute_actor_success_scores(
+    participants: List[Dict[str, Any]],
+    performances: List[Dict[str, Any]],
+    course_context: Dict[str, Any],
+) -> Tuple[Dict[int, Dict[str, Any]], Dict[int, Dict[str, Any]]]:
+    """
+    Approximation data-driven à partir de l'historique disponible dans la course.
+    - jockey: résultats du jockey dans les historiques observés
+    - entraîneur: proxy basé sur la réussite globale du cheval + volume du tandem trainer/cheval disponible
+
+    Limitation: l'API actuelle ne fournit pas un historique global complet jockey/entraîneur externe à la course.
+    """
+    hippo_jour = safe_str((course_context.get("hippodrome") or {}).get("libelleCourt"))
+    current_year = datetime.now().year
+
+    jockey_global = defaultdict(lambda: {"pts": 0.0, "n": 0.0, "pts_hippo": 0.0, "n_hippo": 0.0, "pts_year": 0.0, "n_year": 0.0})
+    horse_form = {}
+
+    for perf in performances or []:
+        num = perf.get("numPmu")
+        courses = perf.get("courses", [])
+        total_pts = 0.0
+        total_n = 0.0
+        for c in courses:
+            jockey = normalize_name(c.get("nomJockey"))
+            place = c.get("place")
+            field = c.get("nbParticipants")
+            pts = weighted_place_score(place, field)
+            total_pts += pts
+            total_n += 1.0
+            if jockey:
+                row = jockey_global[jockey]
+                row["pts"] += pts
+                row["n"] += 1.0
+                if hippo_jour and normalize_name(c.get("hippodrome")) == hippo_jour:
+                    row["pts_hippo"] += pts
+                    row["n_hippo"] += 1.0
+                cdate = parse_date(c.get("date"))
+                if cdate and cdate.year == current_year:
+                    row["pts_year"] += pts
+                    row["n_year"] += 1.0
+        horse_form[num] = bayesian_rate(total_pts, total_n, prior_mean=0.20, prior_strength=5.0)
+
+    jockey_scores = {}
+    trainer_scores = {}
+
+    for p in participants:
+        num = p.get("numPmu")
+        jockey = normalize_name(p.get("driver"))
+        trainer = normalize_name(p.get("entraineur"))
+
+        j = jockey_global[jockey] if jockey else {"pts": 0, "n": 0, "pts_hippo": 0, "n_hippo": 0, "pts_year": 0, "n_year": 0}
+        global_rate = bayesian_rate(j["pts"], j["n"], prior_mean=0.18, prior_strength=10.0)
+        year_rate = bayesian_rate(j["pts_year"], j["n_year"], prior_mean=global_rate, prior_strength=8.0)
+        hippo_rate = bayesian_rate(j["pts_hippo"], j["n_hippo"], prior_mean=global_rate, prior_strength=8.0)
+        jockey_mix = 0.55 * year_rate + 0.30 * hippo_rate + 0.15 * global_rate
+        jockey_scores[num] = {
+            "score": bounded_score_from_ratio(jockey_mix, center=0.28, slope=6.0),
+            "fiabilite": int(round(clamp((j["n_year"] + j["n_hippo"] + j["n"] * 0.2) * 8, 0, 100))),
+            "total": int(j["n_year"] + j["n_hippo"]),
+            "meta": {
+                "global_rate": round(global_rate, 3),
+                "year_rate": round(year_rate, 3),
+                "hippo_rate": round(hippo_rate, 3),
+            },
         }
 
-        dist_jour = round_distance(course_context.get("distance"))
-        disc_jour = course_context.get("discipline")
-        hippo_jour = (course_context.get("hippodrome") or {}).get("libelleCourt")
-        corde_jour = att["corde"]
-        jockey_jour = att["jockey"]
+        # Proxy entraîneur: moyenne des formes des chevaux de cet entraîneur présents dans les historiques connus.
+        trainer_nums = [x.get("numPmu") for x in participants if normalize_name(x.get("entraineur")) == trainer and x.get("numPmu") in horse_form]
+        trainer_sample = [horse_form[n] for n in trainer_nums if n in horse_form]
+        if trainer_sample:
+            trainer_rate = sum(trainer_sample) / len(trainer_sample)
+            trainer_volume = len(trainer_sample)
+        else:
+            trainer_rate = 0.20
+            trainer_volume = 0
+        trainer_scores[num] = {
+            "score": bounded_score_from_ratio(trainer_rate, center=0.25, slope=6.0),
+            "fiabilite": int(round(clamp(trainer_volume * 25, 0, 100))),
+            "total": trainer_volume,
+            "meta": {
+                "trainer_rate": round(trainer_rate, 3),
+            },
+        }
 
-        # Distance (± 100m)
-        if dist_jour is not None:
-            courses_dist = [c for c in courses if c.get("distance") and abs(round_distance(c["distance"]) - dist_jour) <= 100]
-        else:
-            courses_dist = []
-        if courses_dist:
-            total = len(courses_dist)
-            victories = sum(1 for c in courses_dist if c.get("place") == 1)
-            places = sum(1 for c in courses_dist if c.get("place") in (1, 2, 3))
-            score_dist = bayesian_adaptation_score(
-                victories,
-                places,
-                total,
-                prior_mean=0.28,
-                prior_strength=6.0,
-                victory_weight=3.0,
-                place_weight=1.2,
-                exponent=1.35,
-            )
-            fiab_dist = bayesian_reliability(total, scale=10.0)
-        else:
-            score_dist = -10
-            fiab_dist = 0
+    return jockey_scores, trainer_scores
 
-        # Discipline
-        if disc_jour:
-            courses_disc = [c for c in courses if c.get("discipline") == disc_jour]
-        else:
-            courses_disc = []
-        if courses_disc:
-            total = len(courses_disc)
-            victories = sum(1 for c in courses_disc if c.get("place") == 1)
-            places = sum(1 for c in courses_disc if c.get("place") in (1, 2, 3))
-            score_disc = bayesian_adaptation_score(
-                victories,
-                places,
-                total,
-                prior_mean=0.30,
-                prior_strength=7.0,
-                victory_weight=2.8,
-                place_weight=1.0,
-                exponent=1.30,
-            )
-            fiab_disc = bayesian_reliability(total, scale=12.0)
-        else:
-            score_disc = -5
-            fiab_disc = 0
 
-        # Corde
-        if corde_jour is not None:
-            courses_corde = [c for c in courses if c.get("corde") == corde_jour]
-        else:
-            courses_corde = []
-        if courses_corde:
-            total = len(courses_corde)
-            victories = sum(1 for c in courses_corde if c.get("place") == 1)
-            places = sum(1 for c in courses_corde if c.get("place") in (1, 2, 3))
-            score_corde = bayesian_adaptation_score(
-                victories,
-                places,
-                total,
-                prior_mean=0.29,
-                prior_strength=8.0,
-                victory_weight=2.5,
-                place_weight=0.9,
-                exponent=1.30,
-            )
-            fiab_corde = bayesian_reliability(total, scale=12.0)
-        else:
-            score_corde = -5
-            fiab_corde = 0
+def compute_value_drop_scores(participants: List[Dict[str, Any]], performances: List[Dict[str, Any]]) -> Dict[int, Dict[str, Any]]:
+    """
+    Plus grosses chutes de valeurs / bonnes conditions du jour J.
+    Avec les données disponibles, on utilise surtout le handicapValeur et le poids.
+    On favorise les chevaux dont la valeur actuelle semble basse relativement au lot.
+    """
+    values = [p.get("handicapValeur") for p in participants if p.get("handicapValeur") is not None]
+    weights = [p.get("handicapPoids") for p in participants if p.get("handicapPoids") is not None]
 
-        # Jockey
-        if jockey_jour:
-            courses_jock = [c for c in courses if c.get("nomJockey") == jockey_jour]
-        else:
-            courses_jock = []
-        if courses_jock:
-            total = len(courses_jock)
-            victories = sum(1 for c in courses_jock if c.get("place") == 1)
-            places = sum(1 for c in courses_jock if c.get("place") in (1, 2, 3))
-            score_jock = bayesian_adaptation_score(
-                victories,
-                places,
-                total,
-                prior_mean=0.31,
-                prior_strength=9.0,
-                victory_weight=2.3,
-                place_weight=0.9,
-                exponent=1.25,
-            )
-            fiab_jock = bayesian_reliability(total, scale=14.0)
-        else:
-            score_jock = -5
-            fiab_jock = 0
+    min_val = min(values) if values else None
+    max_val = max(values) if values else None
+    min_w = min(weights) if weights else None
+    max_w = max(weights) if weights else None
 
-        # Hippodrome
-        if hippo_jour:
-            courses_hippo = [c for c in courses if c.get("hippodrome") == hippo_jour]
-        else:
-            courses_hippo = []
-        if courses_hippo:
-            total = len(courses_hippo)
-            victories = sum(1 for c in courses_hippo if c.get("place") == 1)
-            places = sum(1 for c in courses_hippo if c.get("place") in (1, 2, 3))
-            score_hippo = bayesian_adaptation_score(
-                victories,
-                places,
-                total,
-                prior_mean=0.27,
-                prior_strength=9.0,
-                victory_weight=2.4,
-                place_weight=0.9,
-                exponent=1.32,
-            )
-            fiab_hippo = bayesian_reliability(total, scale=14.0)
-        else:
-            score_hippo = -5
-            fiab_hippo = 0
+    results = {}
+    for p in participants:
+        num = p.get("numPmu")
+        hv = p.get("handicapValeur")
+        hp = p.get("handicapPoids")
 
-        # Forme récente (3 dernières courses)
-        recent = courses[:3]
-        if recent:
-            total = len(recent)
-            victories = sum(1 for c in recent if c.get("place") == 1)
-            places = sum(1 for c in recent if c.get("place") in (1, 2, 3))
-            score_recent = bayesian_adaptation_score(
-                victories,
-                places,
-                total,
-                prior_mean=0.34,
-                prior_strength=2.5,
-                victory_weight=3.0,
-                place_weight=1.3,
-                exponent=1.18,
-            )
-            # Bonus si dernière victoire
-            if recent[0].get("place") == 1:
-                score_recent += 8
-            elif recent[0].get("place") in (2, 3):
-                score_recent += 4
-            score_recent = clamp(score_recent, 0.0, 100.0)
-            fiab_recent = bayesian_reliability(total, scale=3.0)
-        else:
-            score_recent = -15
-            fiab_recent = 0
+        value_adv = 0.5
+        if hv is not None and min_val is not None and max_val is not None and max_val > min_val:
+            value_adv = 1.0 - ((hv - min_val) / (max_val - min_val))
 
-        # Gains (proxy de niveau, normalisé par max des participants)
-        score_gains = att["gains"]
+        weight_adv = 0.5
+        if hp is not None and min_w is not None and max_w is not None and max_w > min_w:
+            weight_adv = 1.0 - ((hp - min_w) / (max_w - min_w))
 
-        # Poids (plus léger = mieux, mais handicap = poids imposé donc moins lourd = avantage)
-        poids = att["poids"]
-        if poids is not None:
-            poids_kg = poids / 10.0
-            score_poids = max(0, 100 - (poids_kg - 55) * 5)  # 55kg = 100, 60kg = 75, 65kg = 50
-        else:
-            score_poids = 50
+        # Petit bonus si le cheval a déjà montré de la compétitivité malgré des charges supérieures.
+        perf = next((x for x in performances if x.get("numPmu") == num), None)
+        hist = perf.get("courses", []) if perf else []
+        form_pts = sum(weighted_place_score(c.get("place"), c.get("nbParticipants")) for c in hist[:5])
+        form_rate = bayesian_rate(form_pts, len(hist[:5]), prior_mean=0.18, prior_strength=3.0)
 
-        # Age
-        age = att["age"]
-        if age is not None:
-            if age in (4, 5, 6):
-                score_age = 70
-            elif age in (3, 7):
-                score_age = 50
-            else:
-                score_age = 30
-        else:
-            score_age = 50
+        composite = 0.45 * value_adv + 0.35 * weight_adv + 0.20 * form_rate
+        results[num] = {
+            "score": bounded_score_from_ratio(composite, center=0.52, slope=6.5),
+            "fiabilite": 80 if hv is not None or hp is not None else 20,
+            "total": len(hist[:5]),
+            "meta": {
+                "handicapValeur": hv,
+                "handicapPoids": hp,
+                "value_adv": round(value_adv, 3),
+                "weight_adv": round(weight_adv, 3),
+            },
+        }
+    return results
 
-        # Musique
-        score_mus = att["musique"]
 
-        # Malus contextuels
-        malus = 0
-        if horse.get("jockey_change") is True:
-            malus -= 5
-        if horse.get("jumentPleine") is True:
-            malus -= 3
-        if horse.get("indicateurInedit") is True:
-            malus -= 8
-        if recent and recent[0].get("place") in (None, 0):
-            malus -= 3  # non classé dernièrement
+def compute_entity_success_scores(
+    participants: List[Dict[str, Any]],
+    performances: List[Dict[str, Any]],
+    field_name: str,
+    prior_mean: float,
+    prior_strength: float,
+    score_center: float,
+) -> Dict[int, Dict[str, Any]]:
+    """
+    Réussite propriétaire / éleveur / origines à partir des chevaux présents et de leurs historiques.
+    C'est une approximation interne au jeu de données chargé.
+    """
+    entity_stats = defaultdict(lambda: {"pts": 0.0, "n": 0.0})
 
+    for p in participants:
+        key = normalize_name(p.get(field_name))
+        if not key:
+            continue
+        perf = next((x for x in performances if x.get("numPmu") == p.get("numPmu")), None)
+        hist = perf.get("courses", []) if perf else []
+        for c in hist[:10]:
+            entity_stats[key]["pts"] += weighted_place_score(c.get("place"), c.get("nbParticipants"))
+            entity_stats[key]["n"] += 1.0
+
+    results = {}
+    for p in participants:
+        key = normalize_name(p.get(field_name))
+        stats = entity_stats[key] if key else {"pts": 0.0, "n": 0.0}
+        rate = bayesian_rate(stats["pts"], stats["n"], prior_mean=prior_mean, prior_strength=prior_strength)
+        results[p.get("numPmu")] = {
+            "score": bounded_score_from_ratio(rate, center=score_center, slope=5.8),
+            "fiabilite": int(round(clamp(stats["n"] * 10, 0, 100))),
+            "total": int(stats["n"]),
+            "meta": {
+                "entity": key,
+                "rate": round(rate, 3),
+            },
+        }
+    return results
+
+
+def compute_origin_scores(participants: List[Dict[str, Any]], performances: List[Dict[str, Any]]) -> Dict[int, Dict[str, Any]]:
+    origin_stats = defaultdict(lambda: {"pts": 0.0, "n": 0.0})
+    horse_origin = {}
+
+    for p in participants:
+        sire = normalize_name(p.get("nomPere"))
+        dam = normalize_name(p.get("nomMere"))
+        damsire = normalize_name(p.get("nomPereMere"))
+        key = " / ".join([x for x in [sire, dam, damsire] if x])
+        horse_origin[p.get("numPmu")] = key
+        if not key:
+            continue
+        perf = next((x for x in performances if x.get("numPmu") == p.get("numPmu")), None)
+        hist = perf.get("courses", []) if perf else []
+        for c in hist[:10]:
+            origin_stats[key]["pts"] += weighted_place_score(c.get("place"), c.get("nbParticipants"))
+            origin_stats[key]["n"] += 1.0
+
+    results = {}
+    for p in participants:
+        num = p.get("numPmu")
+        key = horse_origin.get(num, "")
+        stats = origin_stats[key] if key else {"pts": 0.0, "n": 0.0}
+        rate = bayesian_rate(stats["pts"], stats["n"], prior_mean=0.17, prior_strength=8.0)
+        results[num] = {
+            "score": bounded_score_from_ratio(rate, center=0.24, slope=5.8),
+            "fiabilite": int(round(clamp(stats["n"] * 10, 0, 100))),
+            "total": int(stats["n"]),
+            "meta": {
+                "origin": key,
+                "rate": round(rate, 3),
+            },
+        }
+    return results
+
+
+def compute_recent_form_scores(performances: List[Dict[str, Any]]) -> Dict[int, Dict[str, Any]]:
+    results = {}
+    for perf in performances or []:
+        num = perf.get("numPmu")
+        hist = perf.get("courses", [])[:5]
+        pts = 0.0
+        total_weight = 0.0
+        for idx, c in enumerate(hist):
+            weight = max(0.4, 1.0 - idx * 0.15)
+            pts += weighted_place_score(c.get("place"), c.get("nbParticipants")) * weight
+            total_weight += weight
+        rate = bayesian_rate(pts, total_weight, prior_mean=0.18, prior_strength=2.5)
+        results[num] = {
+            "score": bounded_score_from_ratio(rate, center=0.26, slope=6.2),
+            "fiabilite": int(round(clamp(total_weight * 20, 0, 100))),
+            "total": len(hist),
+            "meta": {"rate": round(rate, 3)},
+        }
+    return results
+
+
+def compute_indicators_for_all(
+    courses_list: List[List[Dict[str, Any]]],
+    participants: List[Dict[str, Any]],
+    course_context: Dict[str, Any],
+    performances: List[Dict[str, Any]],
+) -> Dict[int, Dict[str, Any]]:
+    indicators = {}
+
+    duel_scores = compute_duel_scores(participants, performances)
+    jockey_scores, trainer_scores = compute_actor_success_scores(participants, performances, course_context)
+    value_scores = compute_value_drop_scores(participants, performances)
+    owner_scores = compute_entity_success_scores(participants, performances, "proprietaire", 0.16, 10.0, 0.22)
+    breeder_scores = compute_entity_success_scores(participants, performances, "eleveur", 0.16, 10.0, 0.22)
+    origin_scores = compute_origin_scores(participants, performances)
+    recent_scores = compute_recent_form_scores(performances)
+
+    for i, (horse, courses) in enumerate(zip(participants, courses_list)):
+        num = horse.get("numPmu", i)
         indicators[num] = {
-            "attitude": att,
-            "distance": {"score": score_dist, "fiabilite": fiab_dist, "total": len(courses_dist)},
-            "discipline": {"score": score_disc, "fiabilite": fiab_disc, "total": len(courses_disc)},
-            "corde": {"score": score_corde, "fiabilite": fiab_corde, "total": len(courses_corde)},
-            "jockey": {"score": score_jock, "fiabilite": fiab_jock, "total": len(courses_jock)},
-            "hippodrome": {"score": score_hippo, "fiabilite": fiab_hippo, "total": len(courses_hippo)},
-            "forme_recente": {"score": score_recent, "fiabilite": fiab_recent, "total": len(recent)},
-            "gains": {"score": score_gains, "fiabilite": 100},
-            "poids": {"score": score_poids, "fiabilite": 100},
-            "age": {"score": score_age, "fiabilite": 100},
-            "musique": {"score": score_mus, "fiabilite": 100},
-            "malus": malus,
+            "attitude": {
+                "corde": horse.get("placeCorde"),
+                "jockey": horse.get("driver"),
+                "poids": horse.get("handicapPoids"),
+                "gains": (horse.get("gainsParticipant") or {}).get("gainsCarriere", 0),
+                "age": horse.get("age"),
+            },
+            "duels": duel_scores.get(num, {"score": 50, "fiabilite": 0, "total": 0}),
+            "jockey": jockey_scores.get(num, {"score": 50, "fiabilite": 0, "total": 0}),
+            "entraineur": trainer_scores.get(num, {"score": 50, "fiabilite": 0, "total": 0}),
+            "valeur_jour": value_scores.get(num, {"score": 50, "fiabilite": 0, "total": 0}),
+            "proprietaire": owner_scores.get(num, {"score": 50, "fiabilite": 0, "total": 0}),
+            "origines": origin_scores.get(num, {"score": 50, "fiabilite": 0, "total": 0}),
+            "eleveur": breeder_scores.get(num, {"score": 50, "fiabilite": 0, "total": 0}),
+            "forme_recente": recent_scores.get(num, {"score": 50, "fiabilite": 0, "total": 0}),
+            "malus": 0,
             "history": courses[:10],
         }
     return indicators
 
 
-def compute_consensus_ranking(indicators: Dict[int, Dict[str, Any]],
-                             participants: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Pour chaque critère, classe les chevaux par score décroissant.
-    Le classement consensus est la moyenne pondérée des classements.
-    """
+def compute_consensus_ranking(indicators: Dict[int, Dict[str, Any]], participants: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     nums = [p.get("numPmu") for p in participants]
-    n = len(nums)
-    if n == 0:
+    if not nums:
         return []
 
-    # Critères avec leurs poids
     criteres = [
-        ("distance", 0.25),
-        ("forme_recente", 0.20),
-        ("musique", 0.15),
-        ("jockey", 0.15),
-        ("discipline", 0.10),
-        ("corde", 0.10),
-        ("gains", 0.05),
+        ("duels", 0.24),
+        ("jockey", 0.17),
+        ("entraineur", 0.16),
+        ("valeur_jour", 0.16),
+        ("forme_recente", 0.12),
+        ("proprietaire", 0.06),
+        ("origines", 0.05),
+        ("eleveur", 0.04),
     ]
 
-    # Calculer le classement pour chaque critère
     rankings = {num: {} for num in nums}
     for crit_name, crit_weight in criteres:
         scores = [(num, indicators[num].get(crit_name, {}).get("score", -999)) for num in nums]
-        # Trier par score décroissant
         scores.sort(key=lambda x: x[1], reverse=True)
-        # Attribuer les classements (ex-aequo = même rang)
         rank = 1
         prev_score = None
         for i, (num, score) in enumerate(scores):
@@ -388,27 +461,19 @@ def compute_consensus_ranking(indicators: Dict[int, Dict[str, Any]],
             }
             prev_score = score
 
-    # Score consensus pour chaque cheval
     consensus = {}
     for num in nums:
-        total_weight = 0
-        weighted_rank = 0
+        weighted_rank = 0.0
+        total_weight = 0.0
         for crit_name, crit_weight in criteres:
             r = rankings[num][crit_name]
-            weighted_rank += r["rank"] * crit_weight
-            total_weight += crit_weight
-        consensus[num] = round(weighted_rank / total_weight, 2) if total_weight > 0 else 999
+            fiab = indicators[num].get(crit_name, {}).get("fiabilite", 0) / 100.0
+            adaptive_weight = crit_weight * (0.55 + 0.45 * fiab)
+            weighted_rank += r["rank"] * adaptive_weight
+            total_weight += adaptive_weight
+        consensus[num] = round(weighted_rank / total_weight, 2) if total_weight > 0 else 999.0
 
-    # Ajouter les malus
-    for num in nums:
-        malus = indicators[num].get("malus", 0)
-        if malus < 0:
-            consensus[num] += abs(malus) * 0.3  # malus pénalise le classement
-
-    # Trier par consensus croissant (1er = meilleur)
     sorted_nums = sorted(nums, key=lambda x: consensus[x])
-
-    # Construire le résultat
     results = []
     for rank, num in enumerate(sorted_nums, 1):
         ind = indicators[num]
@@ -431,9 +496,14 @@ def compute_consensus_ranking(indicators: Dict[int, Dict[str, Any]],
             "gainsAnneeEnCours": (next((p.get("gainsParticipant") for p in participants if p.get("numPmu") == num), {}) or {}).get("gainsAnneeEnCours"),
             "jumentPleine": next((p.get("jumentPleine") for p in participants if p.get("numPmu") == num), None),
             "indicateurInedit": next((p.get("indicateurInedit") for p in participants if p.get("numPmu") == num), None),
+            "proprietaire": next((p.get("proprietaire") for p in participants if p.get("numPmu") == num), None),
+            "nomPere": next((p.get("nomPere") for p in participants if p.get("numPmu") == num), None),
+            "nomMere": next((p.get("nomMere") for p in participants if p.get("numPmu") == num), None),
+            "nomPereMere": next((p.get("nomPereMere") for p in participants if p.get("numPmu") == num), None),
+            "eleveur": next((p.get("eleveur") for p in participants if p.get("numPmu") == num), None),
+            "handicapValeur": next((p.get("handicapValeur") for p in participants if p.get("numPmu") == num), None),
         }
 
-        # Détail des classements par critère
         crit_details = []
         for crit_name, crit_weight in criteres:
             r = rankings[num][crit_name]
@@ -443,11 +513,11 @@ def compute_consensus_ranking(indicators: Dict[int, Dict[str, Any]],
                 "score": r["score"],
                 "poids": crit_weight,
                 "total": ind.get(crit_name, {}).get("total", 0),
+                "fiabilite": ind.get(crit_name, {}).get("fiabilite", 0),
             })
 
-        # Confiance
-        total_courses = ind.get("distance", {}).get("total", 0) + ind.get("discipline", {}).get("total", 0)
-        fiab = min(100, total_courses * 8 + 20)
+        fiab_values = [ind.get(c, {}).get("fiabilite", 0) for c, _ in criteres]
+        fiab = int(round(sum(fiab_values) / len(fiab_values))) if fiab_values else 0
 
         results.append({
             "attitude": att,
@@ -463,15 +533,11 @@ def compute_consensus_ranking(indicators: Dict[int, Dict[str, Any]],
     return results
 
 
-# =============================================================================
-# BUILD ANALYSES
-# =============================================================================
 def build_analyses(
     participants: List[Dict[str, Any]],
     performances: List[Dict[str, Any]],
     course_context: Optional[Dict[str, Any]] = None
 ) -> List[Dict[str, Any]]:
-    # Indexer les courses par numPmu
     perf_by_num = {}
     for p in performances or []:
         num = p.get("numPmu")
@@ -483,6 +549,6 @@ def build_analyses(
         num = p.get("numPmu")
         courses_list.append(perf_by_num.get(num, []))
 
-    indicators = compute_indicators_for_all(courses_list, participants, course_context or {})
+    indicators = compute_indicators_for_all(courses_list, participants, course_context or {}, performances or [])
     results = compute_consensus_ranking(indicators, participants)
     return results
