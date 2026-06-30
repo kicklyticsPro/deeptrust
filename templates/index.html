@@ -3,229 +3,227 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Analyse Turf - Classement Consensus</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <title>DeepTrust - Analyse Turf</title>
+    <link rel="stylesheet" href="/statics/css/style.css">
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>🏇 Analyse Turf - Classement Consensus</h1>
-            <p class="subtitle">Méthode Borda : chaque critère produit un classement, le consensus est la moyenne pondérée</p>
+            <h1>DeepTrust</h1>
+            <p>Classement des chevaux par affrontements, connexions et conditions du jour</p>
         </header>
 
         <section class="controls">
-            <div class="form-row">
-                <div class="field">
-                    <label for="dateInput">Date (JJMMAAAA)</label>
-                    <input type="text" id="dateInput" placeholder="25062026" maxlength="8">
-                </div>
-                <div class="field">
-                    <label for="reunionSelect">Réunion</label>
-                    <select id="reunionSelect">
-                        <option value="">Choisir une réunion</option>
-                    </select>
-                </div>
-                <div class="field">
-                    <label for="courseSelect">Course</label>
-                    <select id="courseSelect">
-                        <option value="">Choisir une course</option>
-                    </select>
-                </div>
-                <div class="field btn-field">
-                    <button id="loadBtn" class="btn-primary">Analyser la course</button>
-                </div>
+            <div class="control-group">
+                <label for="date">Date</label>
+                <input type="date" id="date">
             </div>
-            <div id="loading" class="loading hidden">Chargement des données...</div>
-            <div id="errorMsg" class="error hidden"></div>
+            <div class="control-group">
+                <label for="reunion">Réunion</label>
+                <select id="reunion"></select>
+            </div>
+            <div class="control-group">
+                <label for="course">Course</label>
+                <select id="course"></select>
+            </div>
+            <button id="loadBtn">Analyser</button>
         </section>
 
-        <section id="courseInfo" class="course-info hidden">
-            <h2 id="courseTitle"></h2>
-            <div id="courseMeta" class="meta"></div>
-        </section>
-
+        <section id="courseInfo" class="course-info hidden"></section>
         <section id="ranking" class="ranking hidden"></section>
         <section id="results" class="results hidden"></section>
     </div>
 
     <script>
-        const dateInput = document.getElementById('dateInput');
-        const reunionSelect = document.getElementById('reunionSelect');
-        const courseSelect = document.getElementById('courseSelect');
+        const dateInput = document.getElementById('date');
+        const reunionSelect = document.getElementById('reunion');
+        const courseSelect = document.getElementById('course');
         const loadBtn = document.getElementById('loadBtn');
-        const loading = document.getElementById('loading');
-        const errorMsg = document.getElementById('errorMsg');
-        const courseInfo = document.getElementById('courseInfo');
-        const courseTitle = document.getElementById('courseTitle');
-        const courseMeta = document.getElementById('courseMeta');
-        const results = document.getElementById('results');
+        const courseInfoDiv = document.getElementById('courseInfo');
+        const rankingDiv = document.getElementById('ranking');
+        const resultsDiv = document.getElementById('results');
 
-        const today = new Date();
-        const dd = String(today.getDate()).padStart(2, '0');
-        const mm = String(today.getMonth() + 1).padStart(2, '0');
-        const yyyy = today.getFullYear();
-        dateInput.value = dd + mm + yyyy;
+        let reunionsCache = [];
 
-        let reunionsData = [];
-        let selectedCourseData = null;
+        function toInputDate(d = new Date()) {
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        }
+
+        function toApiDate(inputValue) {
+            if (!inputValue) return '';
+            const [y, m, d] = inputValue.split('-');
+            return `${d}${m}${y}`;
+        }
+
+        function fmtDateFr(iso) {
+            if (!iso) return 'N/A';
+            try {
+                return new Date(iso).toLocaleDateString('fr-FR');
+            } catch {
+                return iso;
+            }
+        }
+
+        function critLabel(name) {
+            const labels = {
+                duels: 'Duels',
+                jockey: 'Jockey',
+                entraineur: 'Entraîneur',
+                valeur_jour: 'Valeur jour',
+                forme_recente: 'Forme récente',
+                proprietaire: 'Propriétaire',
+                origines: 'Origines',
+                eleveur: 'Éleveur'
+            };
+            return labels[name] || name;
+        }
 
         async function loadReunions() {
-            const date = dateInput.value;
-            if (!date || date.length !== 8) {
-                showError('Date invalide. Format : JJMMAAAA');
-                return;
-            }
-            loading.classList.remove('hidden');
-            errorMsg.classList.add('hidden');
+            const date = toApiDate(dateInput.value);
+            reunionSelect.innerHTML = '<option>Chargement...</option>';
+            courseSelect.innerHTML = '';
             try {
                 const res = await fetch(`/api/reunions?date=${date}`);
                 const data = await res.json();
-                if (!data.success) throw new Error(data.error);
-                reunionsData = data.reunions || [];
-                populateReunions();
+                if (!data.success) throw new Error(data.error || 'Erreur chargement réunions');
+                reunionsCache = data.reunions || [];
+
+                reunionSelect.innerHTML = '';
+                reunionsCache.forEach(r => {
+                    const opt = document.createElement('option');
+                    opt.value = `R${r.numOfficiel}`;
+                    opt.textContent = `R${r.numOfficiel} - ${(r.hippodrome || {}).libelleCourt || 'Hippodrome'} (${r.courses.length} courses)`;
+                    reunionSelect.appendChild(opt);
+                });
+                populateCourses();
             } catch (e) {
-                showError('Erreur chargement réunions : ' + e.message);
-            } finally {
-                loading.classList.add('hidden');
+                reunionSelect.innerHTML = '<option>Erreur</option>';
+                console.error(e);
             }
-        }
-
-        function populateReunions() {
-            reunionSelect.innerHTML = '<option value="">Choisir une réunion</option>';
-            courseSelect.innerHTML = '<option value="">Choisir une course</option>';
-            selectedCourseData = null;
-            courseInfo.classList.add('hidden');
-            results.classList.add('hidden');
-            document.getElementById('ranking').classList.add('hidden');
-
-            reunionsData.forEach(r => {
-                const opt = document.createElement('option');
-                opt.value = r.numOfficiel;
-                opt.textContent = `R${r.numOfficiel} - ${r.hippodrome.libelleCourt || 'Hippodrome'} (${r.pays.libelle || 'FR'})`;
-                reunionSelect.appendChild(opt);
-            });
         }
 
         function populateCourses() {
-            courseSelect.innerHTML = '<option value="">Choisir une course</option>';
-            selectedCourseData = null;
-            courseInfo.classList.add('hidden');
-            results.classList.add('hidden');
-            document.getElementById('ranking').classList.add('hidden');
-
-            const numReunion = reunionSelect.value;
-            const reunion = reunionsData.find(r => String(r.numOfficiel) === numReunion);
+            const reunion = reunionsCache.find(r => `R${r.numOfficiel}` === reunionSelect.value);
+            courseSelect.innerHTML = '';
             if (!reunion) return;
-
             reunion.courses.forEach(c => {
                 const opt = document.createElement('option');
-                opt.value = c.numOrdre;
-                opt.textContent = `C${c.numOrdre} - ${c.libelleCourt || c.libelle || 'Course'} (${c.distance || '?'}m ${c.discipline || ''})`;
-                opt.dataset.json = JSON.stringify(c);
+                opt.value = String(c.numOrdre);
+                opt.textContent = `C${c.numOrdre} - ${c.libelleCourt || c.libelle || 'Course'} (${c.heureDepart || ''})`;
                 courseSelect.appendChild(opt);
             });
+            updateCourseInfo();
         }
 
         function updateCourseInfo() {
-            const opt = courseSelect.selectedOptions[0];
-            if (!opt || !opt.dataset.json) {
-                courseInfo.classList.add('hidden');
-                return;
-            }
-            selectedCourseData = JSON.parse(opt.dataset.json);
-            courseTitle.textContent = `C${selectedCourseData.numOrdre} - ${selectedCourseData.libelle || ''}`;
-            courseMeta.innerHTML = `
-                <span><strong>Hippodrome:</strong> ${selectedCourseData.hippodrome?.libelleCourt || 'N/A'}</span>
-                <span><strong>Distance:</strong> ${selectedCourseData.distance || 'N/A'} ${selectedCourseData.distanceUnit || ''}</span>
-                <span><strong>Corde:</strong> ${selectedCourseData.corde || 'N/A'}</span>
-                <span><strong>Discipline:</strong> ${selectedCourseData.discipline || 'N/A'} / ${selectedCourseData.specialite || 'N/A'}</span>
-                <span><strong>Partants:</strong> ${selectedCourseData.nombreDeclaresPartants || 'N/A'}</span>
-                <span><strong>Type:</strong> ${selectedCourseData.categorieParticularite || 'N/A'}</span>
-                <span><strong>Condition:</strong> ${selectedCourseData.conditionAge || ''} - ${selectedCourseData.conditionSexe || ''}</span>
+            const reunion = reunionsCache.find(r => `R${r.numOfficiel}` === reunionSelect.value);
+            if (!reunion) return;
+            const course = reunion.courses.find(c => String(c.numOrdre) === courseSelect.value);
+            if (!course) return;
+
+            courseInfoDiv.innerHTML = `
+                <div class="info-card">
+                    <h2>${course.libelle || course.libelleCourt || 'Course'}</h2>
+                    <div class="tags">
+                        <span class="tag">${(reunion.hippodrome || {}).libelleCourt || ''}</span>
+                        <span class="tag">${course.distance || ''} ${course.distanceUnit || 'm'}</span>
+                        <span class="tag">${course.discipline || ''}</span>
+                        <span class="tag">${course.typePiste || ''}</span>
+                        <span class="tag">${course.nombreDeclaresPartants || 0} partants</span>
+                    </div>
+                </div>
             `;
-            courseInfo.classList.remove('hidden');
+            courseInfoDiv.classList.remove('hidden');
         }
 
         async function loadAnalysis() {
-            if (!reunionSelect.value || !courseSelect.value) {
-                showError('Sélectionnez une réunion et une course.');
-                return;
-            }
-            const date = dateInput.value;
-            const reunion = `R${reunionSelect.value}`;
+            const date = toApiDate(dateInput.value);
+            const reunion = reunionSelect.value;
             const course = courseSelect.value;
+            rankingDiv.classList.add('hidden');
+            resultsDiv.classList.add('hidden');
+            rankingDiv.innerHTML = '';
+            resultsDiv.innerHTML = '<p class="no-data">Chargement...</p>';
+            resultsDiv.classList.remove('hidden');
 
-            loading.classList.remove('hidden');
-            errorMsg.classList.add('hidden');
-            results.classList.add('hidden');
-            document.getElementById('ranking').classList.add('hidden');
             try {
                 const res = await fetch(`/api/analyse?date=${date}&reunion=${reunion}&course=${course}`);
                 const data = await res.json();
-                if (!data.success) throw new Error(data.error);
-                renderAnalyses(data.analyses);
+                if (!data.success) throw new Error(data.error || 'Erreur analyse');
+                renderAnalysis(data.analyses || []);
             } catch (e) {
-                showError('Erreur analyse : ' + e.message);
-            } finally {
-                loading.classList.add('hidden');
+                resultsDiv.innerHTML = `<p class="no-data">Erreur: ${e.message}</p>`;
+                console.error(e);
             }
         }
 
-        function showError(msg) {
-            errorMsg.textContent = msg;
-            errorMsg.classList.remove('hidden');
-        }
-
-        function renderAnalyses(analyses) {
-            results.innerHTML = '';
+        function renderAnalysis(analyses) {
+            resultsDiv.innerHTML = '';
             if (!analyses || analyses.length === 0) {
-                results.innerHTML = '<p class="no-data">Aucun participant trouvé.</p>';
-                results.classList.remove('hidden');
-                document.getElementById('ranking').classList.add('hidden');
+                resultsDiv.innerHTML = '<p class="no-data">Aucun participant trouvé.</p>';
+                resultsDiv.classList.remove('hidden');
+                rankingDiv.classList.add('hidden');
                 return;
             }
 
             const bestConsensus = analyses[0]?.consensus ?? 0;
 
-            // --- Classement ---
             let rankingHtml = '';
-            if (analyses[0].consensus !== undefined) {
-                rankingHtml += '<div class="podium">';
-                for (let i = 0; i < Math.min(3, analyses.length); i++) {
-                    const a = analyses[i];
-                    const cls = i === 0 ? 'first' : (i === 1 ? 'second' : 'third');
-                    const ecart = (a.consensus - bestConsensus).toFixed(2);
-                    const conf = a.indice_confiance ?? 0;
-                    const confClass = conf >= 60 ? 'high' : (conf >= 40 ? 'mid' : 'low');
-                    rankingHtml += `
-                        <div class="podium-item ${cls}">
-                            <div class="rank">${i+1}</div>
-                            <div class="podium-name">${a.attitude.nom || 'N/A'} <span class="podium-num">N°${a.attitude.numPmu}</span></div>
-                            <div class="podium-consensus">Consensus ${a.consensus}</div>
-                            <div class="podium-detail">+${ecart} vs 1er · Confiance ${conf}%</div>
-                            <div class="confiance-bar ${confClass}"><div class="conf-fill" style="width:${conf}%"></div></div>
-                        </div>
-                    `;
-                }
-                rankingHtml += '</div>';
-
-                rankingHtml += '<div class="rank-table"><h3>Classement complet - Consensus pondéré</h3><table><thead><tr><th>Rang</th><th>N°</th><th>Nom</th><th>Consensus</th><th>Écart</th><th>Conf.</th><th>Distance</th><th>Forme</th><th>Musique</th><th>Jockey</th><th>Disc.</th><th>Corde</th><th>Gains</th></tr></thead><tbody>';
-                analyses.forEach((a, i) => {
-                    const ecart = (a.consensus - bestConsensus).toFixed(2);
-                    const conf = a.indice_confiance ?? 0;
-                    const critMap = {};
-                    (a.criteres || []).forEach(c => { critMap[c.nom] = c; });
-                    const getRank = (name) => critMap[name]?.classement ?? '-';
-                    const getScore = (name) => critMap[name]?.score ?? 0;
-                    rankingHtml += `<tr><td class="rank-col">${i+1}</td><td>${a.attitude.numPmu}</td><td><strong>${a.attitude.nom}</strong></td><td class="score-total">${a.consensus}</td><td>+${ecart}</td><td class="conf-${conf >= 60 ? 'high' : (conf >= 40 ? 'mid' : 'low')}">${conf}%</td><td>${getRank('distance')} <small>(${getScore('distance')})</small></td><td>${getRank('forme_recente')} <small>(${getScore('forme_recente')})</small></td><td>${getRank('musique')} <small>(${getScore('musique')})</small></td><td>${getRank('jockey')} <small>(${getScore('jockey')})</small></td><td>${getRank('discipline')} <small>(${getScore('discipline')})</small></td><td>${getRank('corde')} <small>(${getScore('corde')})</small></td><td>${getRank('gains')} <small>(${getScore('gains')})</small></td></tr>`;
-                });
-                rankingHtml += '</tbody></table></div>';
+            rankingHtml += '<div class="podium">';
+            for (let i = 0; i < Math.min(3, analyses.length); i++) {
+                const a = analyses[i];
+                const cls = i === 0 ? 'first' : (i === 1 ? 'second' : 'third');
+                const ecart = (a.consensus - bestConsensus).toFixed(2);
+                const conf = a.indice_confiance ?? 0;
+                const confClass = conf >= 60 ? 'high' : (conf >= 40 ? 'mid' : 'low');
+                rankingHtml += `
+                    <div class="podium-item ${cls}">
+                        <div class="rank">${i + 1}</div>
+                        <div class="podium-name">${a.attitude.nom || 'N/A'} <span class="podium-num">N°${a.attitude.numPmu}</span></div>
+                        <div class="podium-consensus">Consensus ${a.consensus}</div>
+                        <div class="podium-detail">+${ecart} vs 1er · Confiance ${conf}%</div>
+                        <div class="confiance-bar ${confClass}"><div class="conf-fill" style="width:${conf}%"></div></div>
+                    </div>
+                `;
             }
-            const rankingSection = document.getElementById('ranking');
-            rankingSection.innerHTML = rankingHtml;
-            rankingSection.classList.remove('hidden');
+            rankingHtml += '</div>';
 
-            // --- Cartes détaillées ---
+            rankingHtml += '<div class="rank-table"><h3>Classement complet - Nouveau consensus</h3>';
+            rankingHtml += '<table><thead><tr><th>Rang</th><th>N°</th><th>Nom</th><th>Consensus</th><th>Écart</th><th>Conf.</th><th>Duels</th><th>Jockey</th><th>Entr.</th><th>Valeur</th><th>Forme</th><th>Prop.</th><th>Orig.</th><th>Élev.</th></tr></thead><tbody>';
+            analyses.forEach((a, i) => {
+                const ecart = (a.consensus - bestConsensus).toFixed(2);
+                const conf = a.indice_confiance ?? 0;
+                const critMap = {};
+                (a.criteres || []).forEach(c => { critMap[c.nom] = c; });
+                const getRank = (name) => critMap[name]?.classement ?? '-';
+                const getScore = (name) => critMap[name]?.score ?? 0;
+                rankingHtml += `
+                    <tr>
+                        <td class="rank-col">${i + 1}</td>
+                        <td>${a.attitude.numPmu}</td>
+                        <td><strong>${a.attitude.nom || 'N/A'}</strong></td>
+                        <td class="score-total">${a.consensus}</td>
+                        <td>+${ecart}</td>
+                        <td class="conf-${conf >= 60 ? 'high' : (conf >= 40 ? 'mid' : 'low')}">${conf}%</td>
+                        <td>${getRank('duels')} <small>(${getScore('duels')})</small></td>
+                        <td>${getRank('jockey')} <small>(${getScore('jockey')})</small></td>
+                        <td>${getRank('entraineur')} <small>(${getScore('entraineur')})</small></td>
+                        <td>${getRank('valeur_jour')} <small>(${getScore('valeur_jour')})</small></td>
+                        <td>${getRank('forme_recente')} <small>(${getScore('forme_recente')})</small></td>
+                        <td>${getRank('proprietaire')} <small>(${getScore('proprietaire')})</small></td>
+                        <td>${getRank('origines')} <small>(${getScore('origines')})</small></td>
+                        <td>${getRank('eleveur')} <small>(${getScore('eleveur')})</small></td>
+                    </tr>
+                `;
+            });
+            rankingHtml += '</tbody></table></div>';
+
+            rankingDiv.innerHTML = rankingHtml;
+            rankingDiv.classList.remove('hidden');
+
             analyses.forEach((a, idx) => {
                 const att = a.attitude;
                 const card = document.createElement('div');
@@ -237,18 +235,18 @@
                 const confLabel = conf >= 60 ? 'Fiable' : (conf >= 40 ? 'Moyenne' : 'Faible');
 
                 let html = `
-                    <div class="rank-badge" title="Rang ${idx+1}">${idx+1}</div>
+                    <div class="rank-badge" title="Rang ${idx + 1}">${idx + 1}</div>
                     <div class="horse-header">
                         <div class="num">${att.numPmu}</div>
                         <div class="infos">
                             <h3>${att.nom || 'N/A'} <span class="age">${att.age || '?'} ans ${att.sexe || ''}</span></h3>
                             <div class="tags">
                                 <span class="tag">${att.race || ''}</span>
-                                <span class="tag">Corde ${att.corde || '?'}</span>
-                                <span class="tag">Poids ${att.poids ? (att.poids/10 + ' kg') : 'N/A'}</span>
-                                <span class="tag">${att.jockey || 'N/A'}</span>
-                                <span class="tag trainer">${att.entraineur || 'N/A'}</span>
-                                <span class="tag">${att.oeilleres || ''}</span>
+                                <span class="tag">Jockey ${att.jockey || 'N/A'}</span>
+                                <span class="tag trainer">Entr. ${att.entraineur || 'N/A'}</span>
+                                <span class="tag">Prop. ${att.proprietaire || 'N/A'}</span>
+                                <span class="tag">Val. ${att.handicapValeur ?? 'N/A'}</span>
+                                <span class="tag">Poids ${att.poids ? (att.poids / 10 + ' kg') : 'N/A'}</span>
                             </div>
                         </div>
                         <div class="score-box">
@@ -263,27 +261,39 @@
                     </div>
                 `;
 
-                // Tableau des classements par critère
                 if (a.criteres && a.criteres.length > 0) {
                     html += `<div class="criteres-table"><h4>Classements par critère</h4><table class="crit-table">
-                        <thead><tr><th>Critère</th><th>Classement</th><th>Score</th><th>Poids</th><th>Courses</th></tr></thead><tbody>`;
+                        <thead><tr><th>Critère</th><th>Classement</th><th>Score</th><th>Poids</th><th>Volume</th><th>Fiabilité</th></tr></thead><tbody>`;
                     a.criteres.forEach(c => {
-                        html += `<tr><td><strong>${c.nom}</strong></td><td class="rank-${c.classement === 1 ? '1' : (c.classement <= 3 ? '3' : '')}">${c.classement}</td><td>${c.score}</td><td>${c.poids * 100}%</td><td>${c.total}</td></tr>`;
+                        html += `<tr>
+                            <td><strong>${critLabel(c.nom)}</strong></td>
+                            <td class="rank-${c.classement === 1 ? '1' : (c.classement <= 3 ? '3' : '')}">${c.classement}</td>
+                            <td>${c.score}</td>
+                            <td>${Math.round(c.poids * 100)}%</td>
+                            <td>${c.total}</td>
+                            <td>${c.fiabilite ?? 0}%</td>
+                        </tr>`;
                     });
-                    html += `<tr class="total-row"><td><strong>Malus</strong></td><td colspan="4"><strong>${a.malus || 0}</strong></td></tr>`;
+                    html += `<tr class="total-row"><td><strong>Malus</strong></td><td colspan="5"><strong>${a.malus || 0}</strong></td></tr>`;
                     html += `</tbody></table></div>`;
                 }
 
-                // Historique détaillé
+                html += `<div class="criteres-table"><h4>Origines & connexions</h4><table class="crit-table"><tbody>
+                    <tr><td><strong>Propriétaire</strong></td><td>${att.proprietaire || 'N/A'}</td></tr>
+                    <tr><td><strong>Éleveur</strong></td><td>${att.eleveur || 'N/A'}</td></tr>
+                    <tr><td><strong>Père</strong></td><td>${att.nomPere || 'N/A'}</td></tr>
+                    <tr><td><strong>Mère</strong></td><td>${att.nomMere || 'N/A'}</td></tr>
+                    <tr><td><strong>Père de mère</strong></td><td>${att.nomPereMere || 'N/A'}</td></tr>
+                </tbody></table></div>`;
+
                 if (a.history && a.history.length > 0) {
                     html += `<div class="history"><h4>10 dernières courses</h4><table>
                         <thead>
                             <tr><th>Date</th><th>Hippodrome</th><th>Prix</th><th>Dist.</th><th>Disc.</th><th>Place</th><th>Terrain</th><th>Corde</th><th>Poids</th><th>Jockey</th></tr>
                         </thead><tbody>`;
                     a.history.forEach(h => {
-                        const d = h.date ? new Date(h.date).toLocaleDateString('fr-FR') : 'N/A';
                         html += `<tr>
-                            <td>${d}</td>
+                            <td>${fmtDateFr(h.date)}</td>
                             <td>${h.hippodrome || ''}</td>
                             <td>${h.nomPrix || ''}</td>
                             <td>${h.distance || ''}</td>
@@ -300,18 +310,18 @@
 
                 html += `</div>`;
                 card.innerHTML = html;
-                results.appendChild(card);
+                resultsDiv.appendChild(card);
             });
 
-            results.classList.remove('hidden');
+            resultsDiv.classList.remove('hidden');
         }
 
+        dateInput.value = toInputDate(new Date());
         dateInput.addEventListener('change', loadReunions);
         reunionSelect.addEventListener('change', populateCourses);
         courseSelect.addEventListener('change', updateCourseInfo);
         loadBtn.addEventListener('click', loadAnalysis);
-
         loadReunions();
     </script>
-</body>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a13c3b404c6e6f19',t:'MTc4MjgxMjY1Ng=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
